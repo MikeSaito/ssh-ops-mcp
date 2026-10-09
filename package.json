@@ -1,0 +1,28 @@
+{
+  "name": "ssh-ops-mcp",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local SSH MCP for recoverable operations, safe file changes and protected transfers",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/MikeSaito/ssh-ops-mcp.git" },
+  "homepage": "https://github.com/MikeSaito/ssh-ops-mcp#readme",
+  "bugs": { "url": "https://github.com/MikeSaito/ssh-ops-mcp/issues" },
+  "engines": { "node": ">=22" },
+  "bin": { "ssh-ops-mcp": "bin/ssh-ops-mcp.js" },
+  "files": ["bin/", "src/", "examples/", "scripts/", "test/", "README.md", "README.ru.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "CHANGELOG.md", "LICENSE", ".env.example"],
+  "scripts": {
+    "start": "node bin/ssh-ops-mcp.js",
+    "check": "node scripts/check-syntax.mjs",
+    "test": "node --test test/*.test.js",
+    "test:operations": "python -B -m unittest discover -s test -p operations_test.py -v",
+    "check:release": "node scripts/check-release.mjs",
+    "prepack": "npm run check:release"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "dotenv": "^16.6.1",
+    "ssh2": "^1.17.0",
+    "zod": "^3.25.76"
+  }
+}

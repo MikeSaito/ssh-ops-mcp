@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible problem without credentials or private server data.
+body:
+  - type: markdown
+    attributes:
+      value: "Never paste passwords, keys, .env contents, real dumps or unredacted logs. For vulnerabilities use private reporting described in SECURITY.md."
+  - type: input
+    id: environment
+    attributes:
+      label: Version, Node version, local OS and remote Linux distribution
+    validations:
+      required: true
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Authentication method
+      options: [password, private_key, agent, not applicable]
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected and actual result
+      description: Use synthetic commands and redact identifying data.
+    validations:
+      required: true

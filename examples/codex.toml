@@ -1,0 +1,19 @@
+# Replace paths; use forward slashes on Windows, e.g. C:/tools/ssh-ops-mcp/...
+# Put credentials in private env files, not in this config or the repository.
+[mcp_servers.ssh_prod]
+command = "node"
+args = ["/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--env-file", "/absolute/private/prod.env"]
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+default_tools_approval_mode = "prompt"
+# Agent mode on Unix: forward the socket variable if needed.
+env_vars = ["SSH_AUTH_SOCK"]
+
+# Optional second connection: separate env file and tool namespace.
+[mcp_servers.ssh_staging]
+command = "node"
+args = ["/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--env-file", "/absolute/private/staging.env"]
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+default_tools_approval_mode = "prompt"
+env_vars = ["SSH_AUTH_SOCK"]

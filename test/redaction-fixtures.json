@@ -1,0 +1,13 @@
+[
+  {"input":"original_secret_files_unchanged: true\nsecret_files_count: 3\ntoken_present: false\n", "output":"original_secret_files_unchanged: true\nsecret_files_count: 3\ntoken_present: false\n"},
+  {"input":"secret:\n  enabled: true\nnext: ok\n", "output":"secret:\n  enabled: true\nnext: ok\n"},
+  {"input":"API_KEY: abc xyz # comment\nnext: value\n", "output":"API_KEY: [REDACTED] # comment\nnext: value\n"},
+  {"input":"{\"API_KEY\":\"abc\\\"def\",\"original_secret_files_unchanged\":true}", "output":"{\"API_KEY\":\"[REDACTED]\",\"original_secret_files_unchanged\":true}"},
+  {"input":"api_key: 'abc xyz'\r\nnext: true\r\n", "output":"api_key: '[REDACTED]'\r\nnext: true\r\n"},
+  {"input":"private_key: |\n  first-line\n  second-line\nnext: ok\n", "output":"private_key: |\n  [REDACTED]\n  [REDACTED]\nnext: ok\n"},
+  {"input":"clientSecret: \"line one\nline two\"\nnext: ok\n", "output":"clientSecret: \"[REDACTED]\n[REDACTED]\"\nnext: ok\n"},
+  {"input":"Authorization: Bearer abcdef\nnext: yes", "output":"Authorization: Bearer [REDACTED]\nnext: yes"},
+  {"input":"SSH_PASSWORD=abc xyz\nTOKEN_ENABLED=true\napi_key=null\n", "output":"SSH_PASSWORD=[REDACTED]\nTOKEN_ENABLED=true\napi_key=null\n"},
+  {"input":"password: # unset\nnext: ok\n", "output":"password: # unset\nnext: ok\n"},
+  {"input":"stripeSecretKey: \"abc\"\ncredentials_verified: true\n", "output":"stripeSecretKey: \"[REDACTED]\"\ncredentials_verified: true\n"}
+]
