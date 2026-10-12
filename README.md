@@ -10,7 +10,7 @@ A local, stdio-only MCP server for administering Linux hosts over SSH. Recover l
 
 - Password, private key, encrypted private key, or SSH-agent authentication; any SSH user and port.
 - SHA-256 server host-key pinning required by default; SSH-agent forwarding disabled.
-- 26 tools: shell execution, persistent operations/reports, deployment locks, file preview/hash/write, SFTP uploads/downloads, network/service/journal diagnostics, and secret-presence checks.
+- 27 tools: server discovery, shell execution, persistent operations/reports, deployment locks, file preview/hash/write, SFTP uploads/downloads, network/service/journal diagnostics, and secret-presence checks.
 - Durable operation IDs, request deduplication, incremental logs and cancellation. Unknown outcomes are never silently retried.
 - Hash-checked atomic writes, optional staged validation, owner/mode preservation and private backups.
 - Detached downloads with byte progress, pause/resume, source integrity checks, private storage and optional authenticated encryption.
@@ -67,12 +67,12 @@ Common options: `SSH_HOST`, `SSH_USERNAME` and `SSH_AUTH_METHOD` are mandatory; 
 
 ## Codex and other MCP clients
 
-[examples/codex.toml](examples/codex.toml) contains two independent profiles. Replace absolute paths and put the entries in your chosen global or project-scoped Codex configuration. Keep passwords out of TOML and use private env-file paths. The example requests tool approval; client approval policy is separate from remote OS permissions.
+[examples/codex.toml](examples/codex.toml) registers one MCP with multiple servers. Replace absolute paths and put the entry in your chosen global or project-scoped Codex configuration. Keep passwords out of TOML and use private env-file paths. The example requests tool approval; client approval policy is separate from remote OS permissions.
 
 ```toml
-[mcp_servers.ssh_prod]
+[mcp_servers.ssh_servers]
 command = "node"
-args = ["/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--env-file", "/absolute/private/prod.env"]
+args = ["/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--servers-file", "/absolute/private/servers.json"]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
 default_tools_approval_mode = "prompt"
@@ -82,7 +82,36 @@ On Windows, use paths such as `C:/tools/ssh-ops-mcp/bin/ssh-ops-mcp.js`. For Uni
 
 Clients using an `mcpServers` JSON configuration can adapt [examples/mcp-client.json](examples/mcp-client.json). This local stdio server is not directly reachable by a cloud-only ChatGPT session: it needs a client/local executor capable of launching local processes. Do not expose it as unauthenticated HTTP.
 
-Each process targets one server profile. Register multiple processes under different names for concurrent production/staging or multiple accounts. Local state lives under `~/.ssh-ops-mcp/state/<target-hash>`; `SSH_MCP_STATE_DIR` overrides the **base**, with the target hash still appended. Remote state is under the SSH account's `~/.local/state/ssh-ops-mcp/`.
+Single-server mode remains available with `--env-file` or the default `.env`: existing calls, state locations and operation IDs are unchanged. Its local state lives under `~/.ssh-ops-mcp/state/<target-hash>`. Remote state remains under the SSH account's `~/.local/state/ssh-ops-mcp/`.
+
+## Multiple servers
+
+Create a private directory outside the repository with `servers.json` and one env file per connection. Use [examples/servers.example.json](examples/servers.example.json) as a template:
+
+```json
+{
+  "version": 1,
+  "servers": [
+    { "id": "prod", "name": "Production", "env_file": "prod.env" },
+    { "id": "staging", "env_file": "staging.env" }
+  ]
+}
+```
+
+Each env file uses the authentication fields above, including a verified host fingerprint. Protect env files with mode 0600 on Unix or an owner-only ACL on Windows. Relative env-file paths resolve from `servers.json`; relative credential paths resolve from their env file. IDs use 1-64 lowercase letters, digits, underscores or hyphens, starting with a letter or digit. Names and IDs must not contain secrets. Duplicate IDs or normalized host/port/user combinations are rejected.
+
+```sh
+node bin/ssh-ops-mcp.js --servers-file /absolute/private/servers.json --check-config
+node bin/ssh-ops-mcp.js --servers-file /absolute/private/servers.json
+```
+
+`--servers-file` and `--env-file` cannot be combined. In multi-server mode profiles do not inherit process-wide SSH credentials or read the default `.env`; only the system `SSH_AUTH_SOCK` can supply an agent socket. Configuration validation is local and reports the failing profile without displaying secrets. A malformed profile prevents startup; an unreachable server at runtime does not prevent using the others.
+
+Call `ssh_servers_list`, then include `server_id` in every other tool call, even with a single configured profile. For example: `ssh_exec({"server_id":"staging","command":"hostname"})`. Retain that ID alongside `operation_id`, `transfer_id` and history cursors. Results, tool-handler errors and audits include the selected server ID. There is no active-server selector, fallback, cross-server history search or batch deployment.
+
+Multi-server state lives under `~/.ssh-ops-mcp/state/profiles/<target-hash>`. Set process-wide `SSH_MCP_STATE_DIR` to change the base. Operations, locks, history, download destinations and audits are target-specific. Upload sources remain in the package's shared `transfers/` directory; the explicit ID selects their destination server. Different hostname aliases for the same machine are not automatically recognized as duplicates.
+
+Restart MCP after changing profiles. Changing an ID alone retains target state; changing host, port or user selects different state. Existing state is not deleted. Running workers keep their connection snapshot, including credentials, and do not follow edited env/key files. Workers receive only the selected connection via IPC and a small system-environment allow-list. Profiles are routing and state isolation, not access controls: any client with these tools can use all configured accounts. Host-key pinning and remote OS permissions remain necessary.
 
 ## Tools and safe workflows
 

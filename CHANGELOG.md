@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+- Multiple server profiles in one MCP using a private servers file and explicit server IDs.
+- Server discovery without credentials or network requests.
+- Target-specific operations, history, downloads and audits; no mutable active connection.
+- Snapshot credentials over worker IPC with a filtered system environment.
+- Existing single-server calls, operation IDs and state paths retained.
+- Two-server loopback tests for routing, isolation, outages and download recovery.
+
 ## 1.1.0
 
 - Unified reports with named phases, UTC timestamps, durations and explained outcomes.
