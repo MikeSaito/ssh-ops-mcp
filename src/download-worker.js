@@ -12,7 +12,7 @@ if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Invalid transfer ID.');
 const dir = path.join(root, 'downloads', id);
 const statusFile = path.join(dir, 'status.json');
 const part = path.join(dir, 'data.part');
-let state, file, connection;
+let state, file, connection, stage = 'initialization';
 const invoke = (sftp, name, ...args) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('SFTP read stalled.')), 30000);
   sftp[name](...args, (error, value) => { clearTimeout(timer); error ? reject(error) : resolve(value); });
@@ -37,10 +37,13 @@ async function run() {
       state.state = 'completed'; state.destination_identity = state.publication_identity; state.finished_at = Date.now();
       return;
     }
+    stage = 'source_snapshot';
+    state.failure_stage = undefined;
     state.state = 'running'; state.updated_at = Date.now(); await save();
     const snapshot = await rpc('file_snapshot', { path: state.remote_path }, 1800000, connection);
     if (state.source && !unchanged(state.source, snapshot)) { state.state = 'source_changed'; throw new Error('source_changed'); }
     state.source = snapshot; state.total_bytes = snapshot.size; await save();
+    stage = 'encryption_key';
     let key = null;
     if (state.encrypt) {
       const keyFile = path.join(dir, 'key.json');
@@ -48,6 +51,7 @@ async function run() {
       if (!sealed) { sealed = await sealKey(crypto.randomBytes(32)); await atomicJson(keyFile, sealed); }
       key = await openKey(sealed);
     }
+    stage = 'partial_file';
     file = await fs.open(part, 'a+', 0o600);
     if (key && (await file.stat()).size === 0) { await file.write(MAGIC); await file.sync(); }
     const prior = await scanPartial(file, key, id);
@@ -57,6 +61,7 @@ async function run() {
     if (position > snapshot.size) { state.state = 'integrity_failed'; throw new Error('integrity_failed'); }
     state.bytes_downloaded = position; await save();
     let lastSave = Date.now();
+    stage = 'sftp_transfer';
     await withSftp(async sftp => {
       const remote = await invoke(sftp, 'open', state.remote_path, 'r');
       try {
@@ -91,12 +96,14 @@ async function run() {
     }, 86400000, connection);
     await file.sync();
     if (state.state === 'paused') return;
+    stage = 'verification';
     state.state = 'verifying'; await save();
     const actual = hash.digest('hex');
     const final = await rpc('file_snapshot', { path: state.remote_path }, 1800000, connection);
     if (!unchanged(snapshot, final)) { state.state = 'source_changed'; throw new Error('source_changed'); }
     if (actual !== snapshot.sha256) { state.state = 'integrity_failed'; throw new Error('integrity_failed'); }
     await file.close(); file = null;
+    stage = 'publication';
     const destination = await transferPath(root, state.local_path);
     await localLock(path.join(root, 'downloads', 'destination-' + crypto.createHash('sha256').update(destination).digest('hex') + '.lock'), async () => {
       state.state = 'publishing'; state.sha256 = actual; state.publication_identity = await fileIdentity(part); await save();
@@ -106,6 +113,7 @@ async function run() {
     });
     state.state = 'completed'; state.sha256 = actual; state.finished_at = Date.now();
   } catch (error) {
+    state.failure_stage = stage;
     if (!['source_changed', 'integrity_failed'].includes(state.state)) state.state = 'interrupted';
     state.detail = ['source_changed', 'integrity_failed'].includes(state.state) ? state.state : 'Download interrupted; inspect status and resume the same transfer_id. No automatic restart.';
   } finally {

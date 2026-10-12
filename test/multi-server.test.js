@@ -135,7 +135,7 @@ test('downloads resume after MCP restart, retain snapshots and reject other-serv
     // Changing credential files after startup must not switch a worker's connection.
     await writeEnv(path.join(f.dir, 'alpha.env'), f.second.env);
     const a = await app.value('ssh_download_file', { server_id: 'alpha', remote_path: '/dump.bin', local_path: 'transfers/same.bin', encrypt: true, wait_ms: 0 });
-    await until(async () => { const status = await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id }); assert.notEqual(status.state, 'interrupted', 'Synthetic download must make progress'); return status.bytes_downloaded > 0; });
+    await until(async () => { const status = await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id }); assert.notEqual(status.state, 'interrupted', 'Synthetic download must make progress: ' + JSON.stringify(status) + ', actions=' + f.first.actions.map(action => action.action).join(',')); return status.bytes_downloaded > 0; });
     await app.value('ssh_download_pause', { server_id: 'alpha', transfer_id: a.transfer_id });
     await until(async () => (await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id })).state === 'paused');
     assert.ok((await app.call('ssh_download_resume', { server_id: 'beta', transfer_id: a.transfer_id })).isError);

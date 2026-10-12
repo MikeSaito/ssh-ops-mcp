@@ -26,7 +26,7 @@ export class Downloads {
     return { transfer_id: id, state: data.state, bytes_downloaded: data.bytes_downloaded || 0,
       total_bytes: data.total_bytes ?? null, percent: data.total_bytes ? Math.min(100, Math.floor(100 * (data.bytes_downloaded || 0) / data.total_bytes)) : (data.state === 'completed' ? 100 : 0),
       encrypted: data.encrypt, sha256: data.sha256, path: data.state === 'completed' ? data.destination : undefined,
-      expires_at: data.expires_at, detail: data.detail };
+      expires_at: data.expires_at, detail: data.detail, failure_stage: data.failure_stage };
   }
   async start(args) {
     await privateDirectory(this.base);
