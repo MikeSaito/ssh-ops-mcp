@@ -52,10 +52,12 @@ export async function localLock(file, action, waitMs = 10000) {
 
 function powershell(script, input) {
   return new Promise((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+    const windowsRoot = process.env.SystemRoot || 'C:\\Windows';
+    const executable = path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       // Do not inherit PowerShell 7 module paths into Windows PowerShell 5.1.
-      env: { ...process.env, PSModulePath: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules') },
+      env: { ...process.env, PSModulePath: path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules') },
     });
     const chunks = [];
     const timer = setTimeout(() => { child.kill(); reject(new Error('Local protection operation timed out.')); }, 15000);

@@ -7,6 +7,7 @@ export async function syntheticServer(label, password, bytes = Buffer.from(label
   const key = privateKey.export({ type: 'pkcs1', format: 'pem' });
   const parsed = ssh2.utils.parseKey(key);
   const clients = new Set(), actions = [], attempts = [], files = new Map([['/dump.bin', bytes]]), operations = new Map();
+  const pendingReads = []; let holdReads = false;
   const mtime = 1700000000;
   const hash = value => crypto.createHash('sha256').update(value).digest('hex');
   const response = payload => {
@@ -78,7 +79,8 @@ export async function syntheticServer(label, password, bytes = Buffer.from(label
             else if (offset >= data.length) sftp.status(id, status.EOF);
             else sftp.data(id, data.subarray(offset, offset + length));
           };
-          if (readDelay) setTimeout(reply, readDelay); else reply();
+          if (holdReads && offset >= 1024 * 1024) pendingReads.push(reply);
+          else if (readDelay) setTimeout(reply, readDelay); else reply();
         });
         sftp.on('CLOSE', (id, handle) => { handles.delete(handle.toString()); sftp.status(id, status.OK); });
       });
@@ -86,6 +88,8 @@ export async function syntheticServer(label, password, bytes = Buffer.from(label
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   return { actions, attempts, files, operations,
+    holdAfterFirstBatch() { holdReads = true; },
+    releaseReads() { holdReads = false; for (const reply of pendingReads.splice(0)) reply(); },
     env: { SSH_HOST: '127.0.0.1', SSH_PORT: String(server.address().port), SSH_USERNAME: 'test-user', SSH_AUTH_METHOD: 'password', SSH_PASSWORD: password,
       SSH_HOST_FINGERPRINT_SHA256: 'SHA256:' + hashHost(parsed), SSH_DIAGNOSTIC_USER: 'diagnostics-' + label },
     async close() { for (const client of clients) client.destroy(); await new Promise(resolve => server.close(resolve)); },

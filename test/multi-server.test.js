@@ -134,9 +134,11 @@ test('downloads resume after MCP restart, retain snapshots and reject other-serv
     app = await f.open();
     // Changing credential files after startup must not switch a worker's connection.
     await writeEnv(path.join(f.dir, 'alpha.env'), f.second.env);
+    f.first.holdAfterFirstBatch();
     const a = await app.value('ssh_download_file', { server_id: 'alpha', remote_path: '/dump.bin', local_path: 'transfers/same.bin', encrypt: true, wait_ms: 0 });
     await until(async () => { const status = await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id }); assert.notEqual(status.state, 'interrupted', 'Synthetic download must make progress: ' + JSON.stringify(status) + ', actions=' + f.first.actions.map(action => action.action).join(',')); return status.bytes_downloaded > 0; });
     await app.value('ssh_download_pause', { server_id: 'alpha', transfer_id: a.transfer_id });
+    f.first.releaseReads();
     await until(async () => (await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id })).state === 'paused');
     assert.ok((await app.call('ssh_download_resume', { server_id: 'beta', transfer_id: a.transfer_id })).isError);
     assert.ok((await app.call('ssh_download_pause', { server_id: 'beta', transfer_id: a.transfer_id })).isError);
@@ -144,7 +146,7 @@ test('downloads resume after MCP restart, retain snapshots and reject other-serv
     assert.equal((await app.value('ssh_download_list', { server_id: 'beta' })).transfers.length, 0);
     await writeEnv(path.join(f.dir, 'alpha.env'), f.first.env);
     const b = await app.value('ssh_download_file', { server_id: 'beta', remote_path: '/dump.bin', local_path: 'transfers/same.bin', wait_ms: 0 });
-    const bDone = await until(async () => { const s = await app.value('ssh_download_status', { server_id: 'beta', transfer_id: b.transfer_id }); return s.state === 'completed' && s; });
+    const bDone = await until(async () => { const s = await app.value('ssh_download_status', { server_id: 'beta', transfer_id: b.transfer_id }); assert.notEqual(s.state, 'interrupted', JSON.stringify(s)); return s.state === 'completed' && s; });
     assert.equal(await fs.readFile(bDone.path, 'utf8'), 'beta-dump');
     await app.close(); app = await f.open();
     assert.equal((await app.value('ssh_download_list', { server_id: 'alpha' })).transfers[0].transfer_id, a.transfer_id);
