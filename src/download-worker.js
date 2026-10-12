@@ -12,7 +12,7 @@ if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Invalid transfer ID.');
 const dir = path.join(root, 'downloads', id);
 const statusFile = path.join(dir, 'status.json');
 const part = path.join(dir, 'data.part');
-let state, file, connection, stage = 'initialization';
+let state, file, connection, workerKey, stage = 'initialization';
 const invoke = (sftp, name, ...args) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('SFTP read stalled.')), 30000);
   sftp[name](...args, (error, value) => { clearTimeout(timer); error ? reject(error) : resolve(value); });
@@ -25,7 +25,7 @@ async function run() {
   try {
     // Recover a crash after atomic publication but before the completion manifest.
     if (state.publication_identity && await fileIdentity(state.destination).catch(() => null) === state.publication_identity) {
-      const key = state.encrypt ? await openKey(await readJson(path.join(dir, 'key.json'))) : null;
+      const key = state.encrypt ? (workerKey || await openKey(await readJson(path.join(dir, 'key.json')))) : null;
       const published = await fs.open(state.destination, 'r');
       try {
         const verified = await scanPartial(published, key, id);
@@ -45,7 +45,9 @@ async function run() {
     state.source = snapshot; state.total_bytes = snapshot.size; await save();
     stage = 'encryption_key';
     let key = null;
-    if (state.encrypt) {
+    if (state.encrypt && workerKey) key = workerKey;
+    else if (state.encrypt) {
+      // Compatibility with older single-server parents; new parents open keys before IPC.
       const keyFile = path.join(dir, 'key.json');
       let sealed = await readJson(keyFile).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
       if (!sealed) { sealed = await sealKey(crypto.randomBytes(32)); await atomicJson(keyFile, sealed); }
@@ -117,6 +119,7 @@ async function run() {
     if (!['source_changed', 'integrity_failed'].includes(state.state)) state.state = 'interrupted';
     state.detail = ['source_changed', 'integrity_failed'].includes(state.state) ? state.state : 'Download interrupted; inspect status and resume the same transfer_id. No automatic restart.';
   } finally {
+    if (workerKey) workerKey.fill(0);
     if (file) await file.close().catch(() => {});
     state.worker_pid = null; state.updated_at = Date.now(); await save();
   }
@@ -127,6 +130,11 @@ process.once('message', async message => {
   if (!message?.run) process.exit(1);
   // Older single-server parents send only run and use their original environment.
   connection = Object.freeze(message.connection ?? { ...process.env });
+  if (message.key) {
+    workerKey = Buffer.from(message.key, 'base64');
+    if (workerKey.length !== 32) process.exit(1);
+    delete message.key;
+  }
   clearTimeout(launchTimer);
   await localLock(path.join(dir, 'worker.lock'), run).catch(() => {});
   process.exit(0);

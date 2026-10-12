@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { transferPath } from './security.js';
-import { atomicJson, readJson, localLock, privateDirectory, alive, delay, openKey, fileIdentity } from './local-state.js';
+import { atomicJson, readJson, localLock, privateDirectory, alive, delay, openKey, sealKey, fileIdentity } from './local-state.js';
 import { snapshotEnvironment, workerEnvironment, connectionIdentity } from './config.js';
 import { scanPartial } from './encrypted-file.js';
 
@@ -53,6 +53,18 @@ export class Downloads {
       if (state.state === 'completed' || ['starting', 'running', 'verifying', 'publishing'].includes(state.state) && alive(state.worker_pid)) return this.status(id);
       if (['source_changed', 'integrity_failed', 'expired'].includes(state.state)) throw new Error('Transfer cannot be resumed: ' + state.state + '. Start an intentionally new transfer.');
       if (Date.parse(state.expires_at) <= Date.now()) throw new Error('Transfer retention expired; use ssh_download_cleanup.');
+      let workerKey;
+      if (state.encrypt) {
+        const keyFile = path.join(dir, 'key.json');
+        let sealed = await readJson(keyFile).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+        if (!sealed) {
+          const fresh = crypto.randomBytes(32);
+          try { sealed = await sealKey(fresh); await atomicJson(keyFile, sealed); }
+          finally { fresh.fill(0); }
+        }
+        const key = await openKey(sealed);
+        try { workerKey = key.toString('base64'); } finally { key.fill(0); }
+      }
       await fs.unlink(path.join(dir, 'pause')).catch(() => {});
       state.state = 'starting'; state.detail = undefined;
       // Claim the worker PID before launching I/O; concurrent resumes are serialized.
@@ -67,7 +79,7 @@ export class Downloads {
       });
       state.worker_pid = child.pid;
       await atomicJson(path.join(dir, 'status.json'), state);
-      child.send({ run: true, connection }); child.disconnect(); child.unref();
+      child.send({ run: true, connection, ...(workerKey ? { key: workerKey } : {}) }); child.disconnect(); child.unref();
       return this.status(id);
     });
   }
