@@ -12,7 +12,7 @@ if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Invalid transfer ID.');
 const dir = path.join(root, 'downloads', id);
 const statusFile = path.join(dir, 'status.json');
 const part = path.join(dir, 'data.part');
-let state, file;
+let state, file, connection;
 const invoke = (sftp, name, ...args) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('SFTP read stalled.')), 30000);
   sftp[name](...args, (error, value) => { clearTimeout(timer); error ? reject(error) : resolve(value); });
@@ -38,7 +38,7 @@ async function run() {
       return;
     }
     state.state = 'running'; state.updated_at = Date.now(); await save();
-    const snapshot = await rpc('file_snapshot', { path: state.remote_path }, 1800000);
+    const snapshot = await rpc('file_snapshot', { path: state.remote_path }, 1800000, connection);
     if (state.source && !unchanged(state.source, snapshot)) { state.state = 'source_changed'; throw new Error('source_changed'); }
     state.source = snapshot; state.total_bytes = snapshot.size; await save();
     let key = null;
@@ -88,12 +88,12 @@ async function run() {
         const after = await invoke(sftp, 'fstat', remote);
         if (after.size !== before.size || after.mtime !== before.mtime) { state.state = 'source_changed'; throw new Error('source_changed'); }
       } finally { await invoke(sftp, 'close', remote).catch(() => {}); }
-    }, 86400000);
+    }, 86400000, connection);
     await file.sync();
     if (state.state === 'paused') return;
     state.state = 'verifying'; await save();
     const actual = hash.digest('hex');
-    const final = await rpc('file_snapshot', { path: state.remote_path }, 1800000);
+    const final = await rpc('file_snapshot', { path: state.remote_path }, 1800000, connection);
     if (!unchanged(snapshot, final)) { state.state = 'source_changed'; throw new Error('source_changed'); }
     if (actual !== snapshot.sha256) { state.state = 'integrity_failed'; throw new Error('integrity_failed'); }
     await file.close(); file = null;
@@ -115,7 +115,10 @@ async function run() {
 }
 // Parent persists the PID and metadata before allowing remote I/O.
 const launchTimer = setTimeout(() => process.exit(1), 10000);
-process.once('message', async () => {
+process.once('message', async message => {
+  if (!message?.run) process.exit(1);
+  // Older single-server parents send only run and use their original environment.
+  connection = Object.freeze(message.connection ?? { ...process.env });
   clearTimeout(launchTimer);
   await localLock(path.join(dir, 'worker.lock'), run).catch(() => {});
   process.exit(0);

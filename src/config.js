@@ -69,7 +69,7 @@ export async function buildConnectOptions(env = process.env) {
     options.authHandler = ['password'];
   } else if (method === 'private_key') {
     if (!env.SSH_PRIVATE_KEY_PATH) throw new Error('Private-key authentication requires SSH_PRIVATE_KEY_PATH.');
-    options.privateKey = await readPrivateFile(env.SSH_PRIVATE_KEY_PATH, env);
+    options.privateKey = env.__privateKey ? Buffer.from(env.__privateKey, 'base64') : await readPrivateFile(env.SSH_PRIVATE_KEY_PATH, env);
     registerSecret(options.privateKey.toString('utf8'));
     options.passphrase = await secret(env, 'SSH_KEY_PASSPHRASE');
     const parsed = utils.parseKey(options.privateKey, options.passphrase);
@@ -81,4 +81,71 @@ export async function buildConnectOptions(env = process.env) {
     options.authHandler = ['agent'];
   }
   return options;
+}
+
+export const serverIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const profileFields = new Set(['SSH_HOST', 'SSH_PORT', 'SSH_USERNAME', 'SSH_AUTH_METHOD', 'SSH_PASSWORD', 'SSH_PASSWORD_FILE', 'SSH_PRIVATE_KEY_PATH', 'SSH_KEY_PASSPHRASE', 'SSH_KEY_PASSPHRASE_FILE', 'SSH_HOST_FINGERPRINT_SHA256', 'SSH_ALLOW_UNVERIFIED_HOST', 'SSH_AGENT_SOCKET', 'SSH_AUTH_SOCK', 'SSH_DIAGNOSTIC_USER', 'SSH_COMMAND_TIMEOUT_MS']);
+
+export async function snapshotEnvironment(env) {
+  const selected = Object.fromEntries(Object.entries(env).filter(([key]) => profileFields.has(key)));
+  for (const key of ['SSH_PASSWORD', 'SSH_KEY_PASSPHRASE']) if (selected[key]) registerSecret(selected[key]);
+  if (env.SSH_MCP_CONFIG_DIR) selected.SSH_MCP_CONFIG_DIR = env.SSH_MCP_CONFIG_DIR;
+  if (env.__privateKey) selected.__privateKey = env.__privateKey;
+  const options = await buildConnectOptions(selected);
+  selected.SSH_HOST = options.host.toLowerCase();
+  selected.SSH_PORT = String(options.port);
+  selected.SSH_USERNAME = options.username;
+  if (options.password) { selected.SSH_PASSWORD = options.password; delete selected.SSH_PASSWORD_FILE; }
+  if (options.privateKey) { selected.__privateKey = options.privateKey.toString('base64'); registerSecret(selected.__privateKey); }
+  if (options.passphrase !== undefined) selected.SSH_KEY_PASSPHRASE = options.passphrase;
+  delete selected.SSH_KEY_PASSPHRASE_FILE;
+  if (options.agent) selected.SSH_AGENT_SOCKET = options.agent;
+  return Object.freeze(selected);
+}
+
+export function workerEnvironment(system = process.env) {
+  const names = new Set(['PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'LANG', 'LC_ALL', 'TZ']);
+  return Object.fromEntries(Object.entries(system).filter(([key]) => names.has(key.toUpperCase())));
+}
+
+export function describeProfile(profile) {
+  return { server_id: profile.id, name: profile.name, host: profile.env.SSH_HOST, port: Number(profile.env.SSH_PORT || 22),
+    username: profile.env.SSH_USERNAME, auth_method: profile.env.SSH_AUTH_METHOD };
+}
+
+export async function loadRegistry({ serversFile, env = process.env } = {}) {
+  if (!serversFile) {
+    const stateDir = stateDirectory(env);
+    // Preserve legacy environment and ID inputs exactly; credentials are snapshotted before worker launch.
+    return { multi: false, profiles: new Map([['default', { id: 'default', name: 'Default', env: Object.freeze({ ...env }), stateDir }]]) };
+  }
+  const file = path.resolve(serversFile);
+  let data;
+  try {
+    const info = await fs.lstat(file);
+    if (!info.isFile() || info.size > 1024 * 1024) throw new Error();
+    data = JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch { throw new Error('Cannot read servers file: expected a regular JSON file smaller than 1 MiB.'); }
+  if (!data || data.version !== 1 || !Array.isArray(data.servers) || !data.servers.length || Object.keys(data).some(key => !['version', 'servers'].includes(key)))
+    throw new Error('Servers file requires version: 1 and a nonempty servers array.');
+  const profiles = new Map(), identities = new Set();
+  for (const item of data.servers) {
+    if (!item || typeof item.id !== 'string' || !serverIdPattern.test(item.id)) throw new Error('Invalid server ID: use 1-64 lowercase letters, digits, underscores or hyphens.');
+    if (profiles.has(item.id)) throw new Error('Duplicate server ID: ' + item.id);
+    try {
+      if (Object.keys(item).some(key => !['id', 'name', 'env_file'].includes(key)) || typeof item.env_file !== 'string' || !item.env_file || (item.name !== undefined && (typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200)))
+        throw new Error('Expected id, optional name, and env_file.');
+      const profileFile = path.resolve(path.dirname(file), item.env_file);
+      const parsed = dotenv.parse(await readPrivateFile(profileFile, {}));
+      const profileEnv = { ...Object.fromEntries(Object.entries(parsed).filter(([key]) => profileFields.has(key))), SSH_MCP_CONFIG_DIR: path.dirname(profileFile) };
+      if (!profileEnv.SSH_AUTH_SOCK && env.SSH_AUTH_SOCK) profileEnv.SSH_AUTH_SOCK = env.SSH_AUTH_SOCK;
+      const snapshot = await snapshotEnvironment(profileEnv);
+      const identity = connectionIdentity(snapshot);
+      if (identities.has(identity)) throw new Error('Duplicate address, port and username.');
+      identities.add(identity);
+      const base = env.SSH_MCP_STATE_DIR ? path.resolve(env.SSH_MCP_STATE_DIR) : path.join(os.homedir(), '.ssh-ops-mcp', 'state');
+      profiles.set(item.id, Object.freeze({ id: item.id, name: item.name || item.id, env: snapshot, stateDir: path.join(base, 'profiles', identity) }));
+    } catch (error) { throw new Error('Profile ' + item.id + ': ' + error.message); }
+  }
+  return { multi: true, profiles };
 }
