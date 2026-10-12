@@ -193,6 +193,13 @@ test('private-key snapshots survive edited key files and empty passphrase-file c
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
+test('Windows DPAPI works in the filtered worker environment', { skip: process.platform !== 'win32' }, () => {
+  const module = new URL('../src/local-state.js', import.meta.url).href;
+  const script = `import { sealKey, openKey } from ${JSON.stringify(module)}; const key = Buffer.alloc(32, 7); const sealed = await sealKey(key); if (!(await openKey(sealed)).equals(key)) throw new Error('DPAPI mismatch'); console.log('verified');`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: workerEnvironment(), encoding: 'utf8', timeout: 35000, windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.error?.message); assert.equal(result.stdout.trim(), 'verified');
+});
+
 test('single-profile multi mode still requires server_id; public CLI checks never connect', async () => {
   const f = await fixture(); let app;
   try {
