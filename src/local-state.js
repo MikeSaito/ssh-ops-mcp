@@ -13,7 +13,16 @@ export async function atomicJson(file, value) {
   const handle = await fs.open(temp, 'wx', 0o600);
   try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
   finally { await handle.close(); }
-  try { await fs.rename(temp, file); }
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try { await fs.rename(temp, file); break; }
+      catch (error) {
+        // Windows readers/scanners may briefly deny replacement. Never unlink the destination.
+        if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 8) throw error;
+        await delay(Math.min(10 * 2 ** attempt, 100));
+      }
+    }
+  }
   finally { await fs.unlink(temp).catch(() => {}); }
 }
 export async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
