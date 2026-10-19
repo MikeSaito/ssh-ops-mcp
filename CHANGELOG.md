@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.1
+
+- Updated dotenv to 18.0.8 and Zod to 4.6.7; retained MCP SDK 1.32.1 and SSH2 1.17.0.
+- Added compatibility tests for profile parsing, tool schemas, required server IDs and default values.
+- Retry temporary Windows state-file replacement locks with bounded backoff, without deleting the original file.
+- Classify SSH connection, authentication, host-key, execution and SFTP failures without including raw errors.
+- Distinguish the current request not being sent from an unknown command outcome; no automatic SSH command retries.
+- Preserve operation IDs and connection details on failed launches and unavailable status checks.
+- Reject malformed helper responses without suggesting that a running operation stopped.
+- Added synthetic disconnect, timeout, missing-exit-status and invalid-response tests.
+
 ## 1.2.0
 
 - Multiple server profiles in one MCP using a private servers file and explicit server IDs.

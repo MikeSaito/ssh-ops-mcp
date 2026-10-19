@@ -42,6 +42,6 @@ test('env-file works from a different cwd, CLI is secret-safe and rejects invali
     assert.equal(valid.status, 0, valid.stderr); assert.equal(JSON.parse(valid.stdout).valid, true);
     assert.ok(!valid.stdout.includes('synthetic-password')); assert.equal(server.attempts.length, 0);
     assert.notEqual(run(['--env-file']).status, 0); assert.notEqual(run(['--env-file', path.join(dir, 'missing')]).status, 0);
-    assert.equal(run(['--help']).status, 0); assert.equal(run(['--version']).stdout.trim(), '1.2.0');
+    assert.equal(run(['--help']).status, 0); assert.equal(run(['--version']).stdout.trim(), '1.2.1');
   } finally { await server.close(); await fs.rm(dir, { recursive: true, force: true }); }
 });

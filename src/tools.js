@@ -56,7 +56,11 @@ export function createTools(profile) {
     try { return await rpc('start', { operation_id, ...spec, request_id: redact(args.request_id), ...(args.title ? { title: redact(args.title) } : {}) }); }
     catch (error) {
       if (error.code === 'resource_busy') throw error; // Explicit pre-launch rejection, not an unknown launch.
-      throw new Error('operation_id=' + operation_id + '. Launch outcome unknown: ' + error.message + '. Poll ssh_operation_status or repeat the same request_id and exact options; do not use a new request_id.');
+      const dispatch = error.transport?.dispatch_state === 'not_sent' ? 'Current SSH attempt was not sent; an earlier attempt with this request_id may still be running' : 'Launch outcome unknown';
+      const failure = new Error('operation_id=' + operation_id + '. ' + dispatch + ': ' + error.message + '. Poll ssh_operation_status or repeat the same request_id and exact options; do not use a new request_id.');
+      failure.operation_id = operation_id;
+      if (error.transport) { failure.code = error.code; failure.transport = error.transport; }
+      throw failure;
     }
   });
 
@@ -64,7 +68,7 @@ export function createTools(profile) {
     operation_id: idSchema,
   }, async (args) => {
     try { return await rpc('status', args); }
-    catch (error) { return { operation_id: args.operation_id, state: 'connection_lost_or_unavailable', outcome: 'unknown', detail: redact(error.message) }; }
+    catch (error) { return { operation_id: args.operation_id, state: 'connection_lost_or_unavailable', outcome: 'unknown', detail: redact(error.message), ...(error.transport ? { code: error.code, connection: error.transport } : {}) }; }
   }, true);
 
   tool('ssh_operation_report', 'Unified operation report: safe task title, named phases, UTC times, queue/execution duration, exit code and outcome. Legacy operations may have partial timing. No commands or log contents are included.', {

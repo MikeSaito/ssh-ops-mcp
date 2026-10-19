@@ -168,6 +168,17 @@ Network probes split DNS/TCP/TLS/SMTP/STARTTLS results and never send mail or cr
 
 The remaining tools retain the configured SSH account's privileges. `ADMIN` labels and MCP annotations are warnings, **not enforcement**. System services, journal access, file ownership changes and arbitrary sudo depend on actual remote permissions. Avoid passwordless unrestricted sudo if you expect isolation.
 
+## SSH failures and recovery
+
+Multi-server errors remain JSON inside text content, with no structuredContent. Transport failures include a stable code and connection.phase / connection.dispatch_state. Single-server errors retain their text format and include the same recovery guidance.
+
+- not_sent: this SSH attempt failed before dispatch. It does not prove an earlier operation with the same request ID never started.
+- unknown: dispatch began, but completion was not confirmed. Check remote effects or the saved operation ID before repeating a modifying command.
+- ssh_operation_status keeps outcome=unknown when the server is unavailable, even if its current polling request was not sent.
+- Failed operation launches retain operation_id. Poll that ID or reuse the exact request_id and options; never invent a new ID to work around a connection error.
+
+Authentication and host-key failures need credential or identity verification, not a blind retry. Neither commands nor SFTP writes are automatically repeated. Windows state-file retries apply only to a local atomic rename and do not resend SSH work.
+
 ## Verification and release
 
 ```sh
