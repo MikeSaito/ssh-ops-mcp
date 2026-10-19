@@ -97,7 +97,24 @@ test('all tools require explicit targets; parallel commands, diagnostics and aud
       assert.ok(!audit.includes(f.first.env.SSH_PASSWORD) && !audit.includes(f.second.env.SSH_PASSWORD));
     }
     await f.second.close(); f.second.close = async () => {};
-    assert.ok((await app.call('ssh_exec', { server_id: 'beta', command: 'synthetic' })).isError);
+    const offline = await app.call('ssh_exec', { server_id: 'beta', command: 'synthetic' });
+    assert.ok(offline.isError);
+    assert.equal(offline.structuredContent, undefined);
+    const offlineValue = JSON.parse(offline.content[0].text);
+    assert.equal(offlineValue.code, 'ssh_connection_refused');
+    assert.equal(offlineValue.connection.dispatch_state, 'not_sent');
+    assert.equal(offlineValue.server_id, 'beta');
+    const unavailable = await app.value('ssh_operation_status', { server_id: 'beta', operation_id: 'a'.repeat(32) });
+    assert.equal(unavailable.state, 'connection_lost_or_unavailable');
+    assert.equal(unavailable.outcome, 'unknown');
+    assert.equal(unavailable.connection.dispatch_state, 'not_sent');
+    const launch = await app.call('ssh_operation_start', { server_id: 'beta', request_id: 'offline-launch', command: 'synthetic-operation' });
+    assert.ok(launch.isError);
+    const launchValue = JSON.parse(launch.content[0].text);
+    assert.match(launchValue.operation_id, /^[a-f0-9]{32}$/);
+    assert.equal(launchValue.code, 'ssh_connection_refused');
+    assert.equal(launchValue.connection.dispatch_state, 'not_sent');
+    assert.match(launchValue.error, /earlier attempt.*may still be running/);
     assert.equal((await app.value('ssh_exec', { server_id: 'alpha', command: 'synthetic' })).server_id, 'alpha');
     assert.ok(!app.errors().includes(f.first.env.SSH_PASSWORD));
   } finally { if (app) await app.close(); await f.close(); }
@@ -139,7 +156,7 @@ test('downloads resume after MCP restart, retain snapshots and reject other-serv
     await until(async () => { const status = await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id }); assert.notEqual(status.state, 'interrupted', 'Synthetic download must make progress: ' + JSON.stringify(status) + ', actions=' + f.first.actions.map(action => action.action).join(',')); return status.bytes_downloaded > 0; });
     await app.value('ssh_download_pause', { server_id: 'alpha', transfer_id: a.transfer_id });
     f.first.releaseReads();
-    await until(async () => (await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id })).state === 'paused');
+    await until(async () => { const s = await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id }); assert.notEqual(s.state, 'interrupted', JSON.stringify(s)); return s.state === 'paused'; });
     assert.ok((await app.call('ssh_download_resume', { server_id: 'beta', transfer_id: a.transfer_id })).isError);
     assert.ok((await app.call('ssh_download_pause', { server_id: 'beta', transfer_id: a.transfer_id })).isError);
     assert.ok((await app.call('ssh_download_cleanup', { server_id: 'beta', transfer_id: a.transfer_id, expired_only: false })).isError);
@@ -151,7 +168,7 @@ test('downloads resume after MCP restart, retain snapshots and reject other-serv
     await app.close(); app = await f.open();
     assert.equal((await app.value('ssh_download_list', { server_id: 'alpha' })).transfers[0].transfer_id, a.transfer_id);
     await app.value('ssh_download_resume', { server_id: 'alpha', transfer_id: a.transfer_id });
-    const aDone = await until(async () => { const s = await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id }); return s.state === 'completed' && s; });
+    const aDone = await until(async () => { const s = await app.value('ssh_download_status', { server_id: 'alpha', transfer_id: a.transfer_id }); assert.notEqual(s.state, 'interrupted', JSON.stringify(s)); return s.state === 'completed' && s; });
     assert.notEqual(aDone.path, bDone.path);
     const exported = await app.value('ssh_download_decrypt', { server_id: 'alpha', transfer_id: a.transfer_id, local_path: 'transfers/plain.bin' });
     const hash = crypto.createHash('sha256').update(await fs.readFile(exported.path)).digest('hex');
