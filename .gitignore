@@ -25,3 +25,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 npm-debug.log*
+
+
+servers.json
+servers.*.json
+!servers.example.json

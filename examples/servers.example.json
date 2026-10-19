@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "servers": [
+    { "id": "prod", "name": "Production", "env_file": "prod.env" },
+    { "id": "staging", "name": "Staging", "env_file": "staging.env" }
+  ]
+}

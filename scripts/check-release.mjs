@@ -6,7 +6,7 @@ const ignored = new Set(['.git', 'node_modules', '.npm-cache', 'dist']);
 const failures = [];
 let count = 0;
 function privatePath(name) {
-  return /(?:^|\/)(?:\.env(?:\..*)?|[^/]+\.env)$/.test(name) && !name.endsWith('.example') ||
+  return /(?:^|\/)(?:servers(?:\.[^/]*)?\.json)$/.test(name) && !name.endsWith('servers.example.json') || /(?:^|\/)(?:\.env(?:\..*)?|[^/]+\.env)$/.test(name) && !name.endsWith('.example') ||
     /(?:^|\/)(?:\.codex|transfers|downloads|state|\.mcp-state|\.ssh-ops-mcp)(?:\/|$)/.test(name) ||
     /\.(?:pem|key|ppk|mcpenc|part|bak|sqlite|db|log|tgz|zip)$/i.test(name);
 }

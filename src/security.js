@@ -77,7 +77,7 @@ export async function audit(root, entry) {
   const dir = root;
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   const safe = {
-    time: new Date().toISOString(), server: process.env.SSH_HOST,
+    time: new Date().toISOString(), server: entry.server ?? process.env.SSH_HOST, server_id: entry.server_id,
     tool: entry.tool, operation_id: entry.operation_id, outcome: entry.outcome,
   };
   // No arguments, commands, contents, stdout or raw errors.

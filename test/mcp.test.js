@@ -17,7 +17,7 @@ test('public entrypoint initializes MCP and executes over the test SSH server', 
   let errors = ''; transport.stderr?.on('data', data => { errors += data.toString(); });
   try {
     await client.connect(transport);
-    const listed = await client.listTools(); assert.equal(listed.tools.length, 26);
+    const listed = await client.listTools(); assert.equal(listed.tools.length, 27);
     assert.ok(listed.tools.some(tool => tool.name === 'ssh_operation_report'));
     assert.ok(listed.tools.find(tool => tool.name === 'ssh_operation_start').inputSchema.properties.steps);
     assert.ok(listed.tools.find(tool => tool.name === 'ssh_operation_list').inputSchema.properties.cursor);
@@ -42,6 +42,6 @@ test('env-file works from a different cwd, CLI is secret-safe and rejects invali
     assert.equal(valid.status, 0, valid.stderr); assert.equal(JSON.parse(valid.stdout).valid, true);
     assert.ok(!valid.stdout.includes('synthetic-password')); assert.equal(server.attempts.length, 0);
     assert.notEqual(run(['--env-file']).status, 0); assert.notEqual(run(['--env-file', path.join(dir, 'missing')]).status, 0);
-    assert.equal(run(['--help']).status, 0); assert.equal(run(['--version']).stdout.trim(), '1.1.0');
+    assert.equal(run(['--help']).status, 0); assert.equal(run(['--version']).stdout.trim(), '1.2.0');
   } finally { await server.close(); await fs.rm(dir, { recursive: true, force: true }); }
 });

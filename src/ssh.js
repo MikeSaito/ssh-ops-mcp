@@ -17,8 +17,8 @@ export async function connect(env = process.env) {
   });
 }
 
-export async function exec(command, timeoutMs = 60_000, input = '', raw = false) {
-  const client = await connect();
+export async function exec(command, timeoutMs = 60_000, input = '', raw = false, env = process.env) {
+  const client = await connect(env);
   try {
     return await new Promise((resolve, reject) => {
       const limit = raw ? 8_000_000 : 5_000_000;
@@ -54,8 +54,8 @@ export async function exec(command, timeoutMs = 60_000, input = '', raw = false)
   } finally { client.end(); }
 }
 
-export async function withSftp(callback, timeoutMs = 300_000) {
-  const client = await connect();
+export async function withSftp(callback, timeoutMs = 300_000, env = process.env) {
+  const client = await connect(env);
   let timer;
   try {
     const operation = new Promise((resolve, reject) => {

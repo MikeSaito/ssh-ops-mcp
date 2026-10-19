@@ -8,6 +8,8 @@ The server runs locally over stdio and does not listen on a network port. Never 
 
 ## Controls
 
+Multi-server profiles select routing and local state, not permissions. Any connected client can call tools for every configured profile. Use explicit IDs to avoid accidental targeting, and restrict each account on its server. Profiles are loaded at startup; workers retain only the selected connection snapshot over IPC, without inheriting other SSH credentials. State isolation uses normalized host/port/user, not DNS resolution. Different aliases of one host may still represent the same remote account and state.
+
 - Pinned SHA-256 server host keys by default. Explicit unverified mode is development-only. Fingerprints must come through an independently trusted channel.
 - Explicit SSH user/authentication mode; no automatic root, auth fallback or agent forwarding. Key/password/passphrase files are bounded regular files; Unix public permissions are rejected. Windows credential ACLs remain the administrator's responsibility.
 - Diagnostic DNS/service tools do not run as root. Privileged execution/file/journal tools retain the SSH account's actual rights.
