@@ -3,12 +3,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { withSftp } from './ssh.js';
 import { rpc } from './remote.js';
-import { atomicJson, readJson, localLock, openKey, sealKey, fileIdentity } from './local-state.js';
+import { atomicJson, readJson, localLock, tryLocalLock, openKey, sealKey, fileIdentity } from './local-state.js';
 import { transferPath } from './security.js';
 import { encryptFrame, scanPartial, MAGIC } from './encrypted-file.js';
 
-const [, , root, id] = process.argv;
+const [, , root, id, runId] = process.argv;
 if (!/^[a-f0-9]{32}$/.test(id || '')) throw new Error('Invalid transfer ID.');
+if (!/^[a-f0-9]{32}$/.test(runId || '')) throw new Error('Invalid worker run ID.');
 const dir = path.join(root, 'downloads', id);
 const statusFile = path.join(dir, 'status.json');
 const part = path.join(dir, 'data.part');
@@ -124,10 +125,13 @@ async function run() {
     state.worker_pid = null; state.updated_at = Date.now(); await save();
   }
 }
-// Parent persists the PID and metadata before allowing remote I/O.
+// Acquire the OS lease BEFORE acknowledging readiness; PID reuse is irrelevant.
+const releaseWorker = await tryLocalLock(path.join(dir, 'worker.lock'));
+if (!releaseWorker) process.exit(1);
+// Parent persists the run identity and metadata before allowing remote I/O.
 const launchTimer = setTimeout(() => process.exit(1), 10000);
 process.once('message', async message => {
-  if (!message?.run) process.exit(1);
+  if (!message?.run || message.run_id !== runId || (await readJson(statusFile)).run_id !== runId) process.exit(1);
   // Older single-server parents send only run and use their original environment.
   connection = Object.freeze(message.connection ?? { ...process.env });
   if (message.key) {
@@ -136,7 +140,7 @@ process.once('message', async message => {
     delete message.key;
   }
   clearTimeout(launchTimer);
-  await localLock(path.join(dir, 'worker.lock'), run).catch(() => {});
+  try { await run(); } finally { releaseWorker(); }
   process.exit(0);
 });
-process.send({ ready: true });
+process.send({ ready: true, run_id: runId });

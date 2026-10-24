@@ -145,7 +145,10 @@ export function createTools(profile) {
     args => downloads.resume(args.transfer_id));
   tool('ssh_download_pause', 'Pause a background download, retaining committed bytes for resume. Poll status to confirm.', { transfer_id: idSchema },
     args => downloads.pause(args.transfer_id));
-  tool('ssh_download_list', 'Find the last 100 local transfers after MCP restart.', {}, () => downloads.list(), true);
+  tool('ssh_download_list', 'Find newest local transfers after restart, with stable pagination. Corrupt entries are counted, not returned.', {
+    limit: z.number().int().min(1).max(100).default(100), cursor: z.string().max(2048).optional(),
+    states: z.array(z.enum(['starting', 'running', 'verifying', 'publishing', 'interrupted', 'paused', 'completed', 'expired', 'source_changed', 'integrity_failed'])).min(1).optional(),
+  }, args => downloads.list(args), true);
   tool('ssh_download_cleanup', 'DELETE local downloaded data and key for this exact transfer. By default only expired data; explicit expired_only=false permits early deletion. Cannot delete running work.', {
     transfer_id: idSchema, expired_only: z.boolean().default(true),
   }, args => downloads.cleanup(args.transfer_id, args.expired_only));

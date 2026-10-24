@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 
 export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function alive(pid) {
@@ -10,10 +11,11 @@ export function alive(pid) {
 }
 export async function atomicJson(file, value) {
   const temp = file + '.' + crypto.randomBytes(8).toString('hex') + '.tmp';
-  const handle = await fs.open(temp, 'wx', 0o600);
-  try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
-  finally { await handle.close(); }
+  let handle;
   try {
+    handle = await fs.open(temp, 'wx', 0o600);
+    await handle.writeFile(JSON.stringify(value)); await handle.sync();
+    await handle.close(); handle = null;
     for (let attempt = 0; ; attempt++) {
       try { await fs.rename(temp, file); break; }
       catch (error) {
@@ -23,7 +25,7 @@ export async function atomicJson(file, value) {
       }
     }
   }
-  finally { await fs.unlink(temp).catch(() => {}); }
+  finally { if (handle) await handle.close().catch(() => {}); await fs.unlink(temp).catch(() => {}); }
 }
 export async function readJson(file) { return JSON.parse(await fs.readFile(file, 'utf8')); }
 export async function fileIdentity(file) {
@@ -31,31 +33,41 @@ export async function fileIdentity(file) {
   // DACL changes can change ctime without altering bytes, especially on Windows.
   return [info.dev, info.ino, info.size, info.mtimeNs].map(String).join(':');
 }
-export async function localLock(file, action, waitMs = 10000) {
+// Persistent mutex files must never be unlinked, even when not locked.
+export async function tryLocalLock(file) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  const legacy = await fs.lstat(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (legacy) {
+    if (!legacy.isDirectory() || legacy.isSymbolicLink()) throw new Error('Unsafe legacy lock path.');
+    const owner = await readJson(path.join(file, 'owner.json')).catch(() => null);
+    if (owner && alive(owner.pid)) throw new Error('Stop legacy MCP processes and workers before migrating local locks.');
+  }
+  const parent = await fs.realpath(path.dirname(file));
+  const target = path.join(parent, path.basename(file) + '.mutex.sqlite');
+  const handle = await fs.open(target, 'ax', 0o600).catch(error => { if (error.code === 'EEXIST') return null; throw error; });
+  if (handle) await handle.close();
+  const info = await fs.lstat(target);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('Unsafe mutex file.');
+  if (process.platform !== 'win32') await fs.chmod(target, 0o600);
+  let db;
+  try {
+    db = new DatabaseSync(target);
+    db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE');
+  } catch (error) {
+    if (db) db.close();
+    if ([5, 6].includes(error.errcode & 255)) return null;
+    throw new Error('Local mutex unavailable; do not repeat modifying work.', { cause: error });
+  }
+  let released = false;
+  return () => { if (!released) { released = true; try { db.exec('ROLLBACK'); } finally { db.close(); } } };
+}
+export async function localLock(file, action, waitMs = 10000) {
   const started = Date.now();
   while (true) {
-    try {
-      await fs.mkdir(file, { mode: 0o700 });
-      await atomicJson(path.join(file, 'owner.json'), { pid: process.pid });
-      break;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      const owner = await readJson(path.join(file, 'owner.json')).catch(() => null);
-      if (owner && !alive(owner.pid)) {
-        // This exact private lock only; never recursively delete an arbitrary path.
-        await fs.unlink(path.join(file, 'owner.json')).catch(() => {});
-        await fs.rmdir(file).catch(() => {});
-        continue;
-      }
-      if (Date.now() - started >= waitMs) throw new Error('Local resource is busy; retry status, not the modifying action.');
-      await delay(50);
-    }
-  }
-  try { return await action(); }
-  finally {
-    await fs.unlink(path.join(file, 'owner.json')).catch(() => {});
-    await fs.rmdir(file).catch(() => {});
+    const release = await tryLocalLock(file);
+    if (release) { try { return await action(); } finally { release(); } }
+    if (Date.now() - started >= waitMs) throw new Error('Local resource is busy; retry status, not the modifying action.');
+    await delay(50);
   }
 }
 
