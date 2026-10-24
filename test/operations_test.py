@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from helper_loader import helper_source
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Remote helper requires Linux; use a disposable Linux container")
@@ -15,7 +16,7 @@ class OperationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="sshops-operation-test-")
         self.root = pathlib.Path(self.temp.name)
-        original = (pathlib.Path(__file__).parents[1] / "src" / "remote_helper.py").read_text(encoding="utf-8")
+        original = helper_source()
         self.source = re.sub(r"^STATE_ROOT = .*", "STATE_ROOT = pathlib.Path(" + repr(str(self.root / "state")) + ")", original, flags=re.M)
         self.ns = {"__name__": "operation_test_helper"}
         exec(compile(self.source, "operation-test-helper", "exec"), self.ns)

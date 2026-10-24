@@ -9,5 +9,9 @@
   {"input":"Authorization: Bearer abcdef\nnext: yes", "output":"Authorization: Bearer [REDACTED]\nnext: yes"},
   {"input":"SSH_PASSWORD=abc xyz\nTOKEN_ENABLED=true\napi_key=null\n", "output":"SSH_PASSWORD=[REDACTED]\nTOKEN_ENABLED=true\napi_key=null\n"},
   {"input":"password: # unset\nnext: ok\n", "output":"password: # unset\nnext: ok\n"},
-  {"input":"stripeSecretKey: \"abc\"\ncredentials_verified: true\n", "output":"stripeSecretKey: \"[REDACTED]\"\ncredentials_verified: true\n"}
+  {"input":"stripeSecretKey: \"abc\"\ncredentials_verified: true\n", "output":"stripeSecretKey: \"[REDACTED]\"\ncredentials_verified: true\n"},
+  {"input":"password: null\r\nsecret_files_unchanged: true\r\ntoken_count: 5\r\n", "output":"password: null\r\nsecret_files_unchanged: true\r\ntoken_count: 5\r\n"},
+  {"input":"private-key: |- # key\r\n  alpha\r\n\r\n  beta\r\nnext: ready\r\n", "output":"private-key: |- # key\r\n  [REDACTED]\r\n\r\n  [REDACTED]\r\nnext: ready\r\n"},
+  {"input":"https://alice:credential@example.invalid/path\nAuthorization=Basic YWJj\n", "output":"https://alice:[REDACTED]@example.invalid/path\nAuthorization=Basic [REDACTED]\n"},
+  {"input":"{\"token\":\"тест 🔐\",\"token_present\":true,\"secret_files_count\":2}", "output":"{\"token\":\"[REDACTED]\",\"token_present\":true,\"secret_files_count\":2}"}
 ]

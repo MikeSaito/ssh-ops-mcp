@@ -1,10 +1,9 @@
-import fs from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { exec, quote } from './ssh.js';
 import { sshError } from './ssh-errors.js';
+import { loadRemoteSource } from './helper-source.js';
 
-const source = await fs.readFile(fileURLToPath(new URL('./remote_helper.py', import.meta.url)), 'utf8');
+const source = await loadRemoteSource();
 
 export async function rpc(action, args = {}, timeoutMs = 30_000, env = process.env) {
   const bootstrap = 'import json,sys; p=json.loads(sys.stdin.read()); exec(compile(p["source"],"mcp-helper","exec"))';
