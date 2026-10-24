@@ -8,7 +8,7 @@
   "repository": { "type": "git", "url": "git+https://github.com/MikeSaito/ssh-ops-mcp.git" },
   "homepage": "https://github.com/MikeSaito/ssh-ops-mcp#readme",
   "bugs": { "url": "https://github.com/MikeSaito/ssh-ops-mcp/issues" },
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.13.0" },
   "bin": { "ssh-ops-mcp": "bin/ssh-ops-mcp.js" },
   "files": ["bin/", "src/", "examples/", "scripts/", "test/", "README.md", "README.ru.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "CHANGELOG.md", "LICENSE", ".env.example"],
   "scripts": {

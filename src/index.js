@@ -7,6 +7,7 @@ import { loadEnvironment, loadRegistry, describeProfile, serverIdPattern } from 
 import { createTools } from './tools.js';
 import { Downloads } from './downloads.js';
 import { redact, audit } from './security.js';
+import { auditedCall } from './audited-call.js';
 
 function sanitize(value) {
   if (typeof value === 'string') return redact(value);
@@ -25,7 +26,7 @@ export async function start(registry) {
     const context = { ...profile, downloads: new Downloads(profile.stateDir, profile.env, registry.multi) };
     return [id, { ...context, definitions: new Map(createTools(context).map(def => [def.name, def])) }];
   }));
-  await Promise.all([...contexts.values()].map(context => context.downloads.cleanupExpired()));
+  await Promise.allSettled([...contexts.values()].map(context => context.downloads.cleanupExpired()));
   const cleanup = setInterval(() => Promise.allSettled([...contexts.values()].map(context => context.downloads.cleanupExpired())), 60000);
   cleanup.unref();
   const template = contexts.values().next().value;
@@ -37,21 +38,25 @@ export async function start(registry) {
       annotations: { readOnlyHint: def.readOnly, destructiveHint: !def.readOnly, openWorldHint: true },
     }, async args => {
       let context;
+      let warnings = [];
       const { server_id, ...input } = args;
       try {
         context = contexts.get(server_id ?? (registry.multi ? undefined : 'default'));
         if (!context) throw new Error('Unknown or missing server_id. Use ssh_servers_list.');
         const record = entry => audit(context.stateDir, { ...entry, server: context.env.SSH_HOST, ...(registry.multi ? { server_id: context.id } : {}) });
-        await record({ tool: def.name, operation_id: input.operation_id, outcome: 'requested' });
-        const value = await context.definitions.get(def.name).callback(input);
-        await record({ tool: def.name, operation_id: value?.operation_id || input.operation_id, outcome: 'returned' });
-        return result(tagged(registry, context, value));
+        const call = await auditedCall(record, { tool: def.name, operation_id: input.operation_id }, () => context.definitions.get(def.name).callback(input));
+        warnings = call.warnings;
+        if (call.error) throw call.error;
+        const response = result(tagged(registry, context, call.value));
+        for (const warning of warnings) response.content.push(...result(tagged(registry, context, warning)).content);
+        return response;
       } catch (error) {
-        if (context) try { await audit(context.stateDir, { tool: def.name, operation_id: input.operation_id, outcome: 'error_or_unknown', server: context.env.SSH_HOST, ...(registry.multi ? { server_id: context.id } : {}) }); } catch {}
         const value = error.details ? { error: 'SSH MCP: ' + error.message, code: error.code, details: error.details } : registry.multi ? { error: 'SSH MCP: ' + error.message } : 'SSH MCP: ' + error.message;
         if (registry.multi && error.transport) Object.assign(value, { code: error.code, connection: error.transport, ...(error.operation_id ? { operation_id: error.operation_id } : {}) });
         const failure = registry.multi ? { ...(typeof value === 'object' ? value : { error: value }), server_id: context?.id ?? server_id ?? null } : value;
-        return { ...result(failure), isError: true };
+        const response = { ...result(failure), isError: true };
+        for (const warning of warnings) response.content.push(...result(tagged(registry, context, warning)).content);
+        return response;
       }
     });
   }

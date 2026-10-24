@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { transferPath } from './security.js';
-import { atomicJson, readJson, localLock, privateDirectory, alive, delay, openKey, sealKey, fileIdentity } from './local-state.js';
+import { atomicJson, readJson, localLock, tryLocalLock, privateDirectory, alive, delay, openKey, sealKey, fileIdentity } from './local-state.js';
 import { snapshotEnvironment, workerEnvironment, connectionIdentity } from './config.js';
 import { scanPartial } from './encrypted-file.js';
 
@@ -17,15 +17,22 @@ export class Downloads {
     if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid transfer_id.');
     return path.join(this.base, id);
   }
+  async workerActive(id, data) {
+    if (data.lease_version !== 1) return alive(data.worker_pid);
+    const release = await tryLocalLock(path.join(this.directory(id), 'worker.lock'));
+    if (!release) return true;
+    release(); return false;
+  }
   async status(id) {
     const dir = this.directory(id);
     const data = await readJson(path.join(dir, 'status.json'));
     this.checkTarget(data);
-    if (['starting', 'running', 'verifying', 'publishing'].includes(data.state) && !alive(data.worker_pid)) data.state = 'interrupted';
+    if (['starting', 'running', 'verifying', 'publishing'].includes(data.state) && !await this.workerActive(id, data)) data.state = 'interrupted';
     // Never return remote contents, stored key blobs or credentials.
     return { transfer_id: id, state: data.state, bytes_downloaded: data.bytes_downloaded || 0,
       total_bytes: data.total_bytes ?? null, percent: data.total_bytes ? Math.min(100, Math.floor(100 * (data.bytes_downloaded || 0) / data.total_bytes)) : (data.state === 'completed' ? 100 : 0),
       encrypted: data.encrypt, sha256: data.sha256, path: data.state === 'completed' ? data.destination : undefined,
+      created_at: Number.isFinite(data.created_at) ? new Date(data.created_at).toISOString() : null,
       expires_at: data.expires_at, detail: data.detail, failure_stage: data.failure_stage };
   }
   async start(args) {
@@ -50,7 +57,7 @@ export class Downloads {
     return localLock(path.join(dir, 'control.lock'), async () => {
       const state = await readJson(path.join(dir, 'status.json'));
       this.checkTarget(state);
-      if (state.state === 'completed' || ['starting', 'running', 'verifying', 'publishing'].includes(state.state) && alive(state.worker_pid)) return this.status(id);
+      if (state.state === 'completed' || ['starting', 'running', 'verifying', 'publishing'].includes(state.state) && await this.workerActive(id, state)) return this.status(id);
       if (['source_changed', 'integrity_failed', 'expired'].includes(state.state)) throw new Error('Transfer cannot be resumed: ' + state.state + '. Start an intentionally new transfer.');
       if (Date.parse(state.expires_at) <= Date.now()) throw new Error('Transfer retention expired; use ssh_download_cleanup.');
       let workerKey;
@@ -69,17 +76,19 @@ export class Downloads {
       state.state = 'starting'; state.detail = undefined;
       // Claim the worker PID before launching I/O; concurrent resumes are serialized.
       const connection = await snapshotEnvironment(this.env);
-      const child = spawn(process.execPath, [fileURLToPath(new URL('./download-worker.js', import.meta.url)), this.root, id],
+      const runId = crypto.randomBytes(16).toString('hex');
+      const child = spawn(process.execPath, [fileURLToPath(new URL('./download-worker.js', import.meta.url)), this.root, id, runId],
         { detached: true, windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: workerEnvironment() });
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => { child.kill(); reject(new Error('Download worker did not become ready.')); }, 15000);
-        child.once('message', message => { clearTimeout(timer); message.ready ? resolve() : reject(new Error('Invalid worker handshake.')); });
+        child.once('message', message => { clearTimeout(timer); message.ready && message.run_id === runId ? resolve() : reject(new Error('Invalid worker handshake.')); });
         child.once('error', error => { clearTimeout(timer); reject(error); });
         child.once('exit', () => { clearTimeout(timer); reject(new Error('Download worker exited before becoming ready.')); });
       });
       state.worker_pid = child.pid;
+      state.lease_version = 1; state.run_id = runId;
       await atomicJson(path.join(dir, 'status.json'), state);
-      child.send({ run: true, connection, ...(workerKey ? { key: workerKey } : {}) }); child.disconnect(); child.unref();
+      child.send({ run: true, run_id: runId, connection, ...(workerKey ? { key: workerKey } : {}) }); child.disconnect(); child.unref();
       return this.status(id);
     });
   }
@@ -99,12 +108,32 @@ export class Downloads {
     } while (Date.now() < deadline);
     return result;
   }
-  async list() {
+  async list({ limit = 100, cursor, states } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Transfer limit must be 1..100.');
     await fs.mkdir(this.base, { recursive: true, mode: 0o700 });
     const entries = await fs.readdir(this.base);
     const result = [];
-    for (const id of entries.filter(id => /^[a-f0-9]{32}$/.test(id)).slice(-100)) result.push(await this.status(id));
-    return { transfers: result };
+    const criteria = crypto.createHash('sha256').update(JSON.stringify({ root: this.base, target: connectionIdentity(this.env), states: states ? [...states].sort() : null })).digest('hex');
+    let before;
+    if (cursor) {
+      try {
+        const value = JSON.parse(Buffer.from(cursor, 'base64url').toString());
+        if (value.criteria !== criteria || !Array.isArray(value.before) || value.before.length !== 2 || !Number.isFinite(value.before[0]) || !/^[a-f0-9]{32}$/.test(value.before[1])) throw new Error();
+        before = value.before;
+      } catch { throw new Error('Invalid transfer cursor or changed filters. Start a new search.'); }
+    }
+    let unavailable = 0;
+    for (const id of entries.filter(id => /^[a-f0-9]{32}$/.test(id))) {
+      try {
+        const item = await this.status(id);
+        const time = item.created_at ? Date.parse(item.created_at) : 0;
+        if (states && !states.includes(item.state) || before && (time > before[0] || time === before[0] && id >= before[1])) continue;
+        result.push({ item, time });
+      } catch { unavailable++; }
+    }
+    result.sort((a, b) => b.time - a.time || b.item.transfer_id.localeCompare(a.item.transfer_id));
+    const selected = result.slice(0, limit), last = selected.at(-1), more = result.length > limit;
+    return { transfers: selected.map(x => x.item), more, next_cursor: more ? Buffer.from(JSON.stringify({ criteria, before: [last.time, last.item.transfer_id] })).toString('base64url') : null, unavailable_count: unavailable };
   }
   async cleanupExpired() {
     const entries = await fs.readdir(this.base).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
@@ -112,8 +141,10 @@ export class Downloads {
     for (const id of entries.filter(id => /^[a-f0-9]{32}$/.test(id))) {
       const state = await readJson(path.join(this.directory(id), 'status.json')).catch(() => null);
       if (!state || state.state === 'expired' || Date.parse(state.expires_at) > Date.now()) continue;
-      if (alive(state.worker_pid) && ['starting', 'running', 'verifying', 'publishing'].includes(state.state)) continue;
-      try { await this.cleanup(id); removed++; } catch { /* Refuse unsafe deletion; leave status for inspection. */ }
+      try {
+        if (['starting', 'running', 'verifying', 'publishing'].includes(state.state) && await this.workerActive(id, state)) continue;
+        await this.cleanup(id); removed++;
+      } catch { /* Refuse unsafe deletion; leave status for inspection. */ }
     }
     return { expired_transfers_removed: removed };
   }
@@ -123,7 +154,7 @@ export class Downloads {
     return localLock(path.join(dir, 'control.lock'), async () => {
       const state = await readJson(path.join(dir, 'status.json'));
       this.checkTarget(state);
-      if (alive(state.worker_pid) && ['starting', 'running', 'verifying', 'publishing'].includes(state.state)) throw new Error('Pause and wait for the worker before cleanup.');
+      if (['starting', 'running', 'verifying', 'publishing'].includes(state.state) && await this.workerActive(id, state)) throw new Error('Pause and wait for the worker before cleanup.');
       if (expiredOnly && Date.parse(state.expires_at) > Date.now()) throw new Error('Retention has not expired; expired_only=false is an explicit deletion request.');
       if (state.state === 'completed') {
         const target = await transferPath(this.root, state.local_path);
