@@ -7,6 +7,8 @@ import { exec as sshExec, withSftp as sshSftp } from './ssh.js';
 import { rpc as remoteRpc, operationId as remoteOperationId } from './remote.js';
 import { redact, transferPath, sha256 } from './security.js';
 import { localLock, atomicJson, readJson } from './local-state.js';
+import { StateMaintenance } from './state-maintenance.js';
+import { connectionIdentity } from './config.js';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const idSchema = z.string().regex(/^[a-f0-9]{32}$/);
 const remotePath = z.string().startsWith('/').max(4096);
@@ -15,6 +17,7 @@ const modeSchema = z.string().regex(/^[0-7]{3,4}$/).optional();
 
 export function createTools(profile) {
   const { env, stateDir, downloads } = profile;
+  const maintenance = new StateMaintenance(downloads?.root ? downloads : { root: stateDir, env });
   const exec = (command, timeout = 60000, input = '', raw = false) => sshExec(command, timeout, input, raw, env);
   const withSftp = (callback, timeout = 300000) => sshSftp(callback, timeout, env);
   const rpc = (action, args = {}, timeout = 30000) => remoteRpc(action, args, timeout, env);
@@ -175,5 +178,24 @@ export function createTools(profile) {
     path: remotePath, names: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).min(1).max(100),
   }, (args) => rpc('secret_presence', args), true);
 
+  tool('ssh_state_usage', 'Report known local download and remote operation/backup bytes. Unknown counts and partial results are explicit. warn_bytes is advisory and never blocks commands.', {
+    scope: z.enum(['local', 'remote', 'all']).default('all'), warn_bytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+  }, async ({ scope, warn_bytes }) => {
+    const value = {};
+    for (const part of scope === 'all' ? ['local', 'remote'] : [scope]) {
+      try { value[part] = part === 'local' ? await maintenance.usage(warn_bytes) : await rpc('state_usage', { warn_bytes }); }
+      catch { value[part] = { unavailable: true, partial: true, code: 'state_usage_unavailable' }; }
+    }
+    return value;
+  }, true);
+  tool('ssh_state_cleanup', 'DELETE only previously previewed MCP data. Default preview returns a single-use plan valid 15 minutes. Active/unknown operations, deduplication records and plaintext exports are never removed. Backups require explicit category.', {
+    scope: z.enum(['local', 'remote']), category: z.enum(['local_downloads', 'operation_logs', 'file_backups']),
+    preview: z.boolean().default(true), plan_id: idSchema.optional(), created_before: z.string().datetime({ offset: true }).optional(),
+    max_items: z.number().int().min(1).max(100).default(100),
+  }, args => {
+    if (args.scope === 'local' && args.category !== 'local_downloads' || args.scope === 'remote' && args.category === 'local_downloads') throw new Error('Cleanup category does not match scope.');
+    if (!args.preview && !args.plan_id) throw new Error('Apply requires plan_id from preview.');
+    return args.scope === 'local' ? maintenance.cleanup(args) : rpc('state_cleanup', { ...args, target_identity: connectionIdentity(env) }, 60000);
+  });
   return definitions;
 }

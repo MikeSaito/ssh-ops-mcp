@@ -17,7 +17,7 @@ test('public entrypoint initializes MCP and executes over the test SSH server', 
   let errors = ''; transport.stderr?.on('data', data => { errors += data.toString(); });
   try {
     await client.connect(transport);
-    const listed = await client.listTools(); assert.equal(listed.tools.length, 27);
+    const listed = await client.listTools(); assert.equal(listed.tools.length, 29);
     assert.ok(listed.tools.some(tool => tool.name === 'ssh_operation_report'));
     assert.ok(listed.tools.find(tool => tool.name === 'ssh_operation_start').inputSchema.properties.steps);
     assert.ok(listed.tools.find(tool => tool.name === 'ssh_operation_list').inputSchema.properties.cursor);

@@ -15,7 +15,7 @@
     "start": "node bin/ssh-ops-mcp.js",
     "check": "node scripts/check-syntax.mjs",
     "test": "node --test test/*.test.js",
-    "test:operations": "python -B -m unittest discover -s test -p operations_test.py -v",
+    "test:operations": "python -B -m unittest discover -s test -p *_test.py -v",
     "check:release": "node scripts/check-release.mjs",
     "prepack": "npm run check:release"
   },
