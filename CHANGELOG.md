@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0
+
+- Preserve action results and operation IDs when the final audit write fails.
+- Replace PID-directory mutexes with OS-released SQLite transactions and download worker leases.
+- Require Node.js 22.13; keep older state, connection settings and request IDs.
+- Sort downloads before limiting, add cursor/state filters and tolerate corrupt entries.
+- Index safe history metadata with dirty-marker recovery and file-search fallback.
+- Add advisory state usage and preview-first, server-bound cleanup plans valid for 15 minutes.
+- Preserve deduplication records, active/unknown work, changed files and plaintext exports.
+- Split the Python helper into locally assembled modules; no remote package installation.
+- Compare JavaScript/Python masking fixtures and read runtime versions from package metadata.
+- Test actual Linux SSH/SFTP file writes, permissions, full disk and crashes around replacement.
+- Update body-parser, fast-uri and ip-address within existing dependency ranges.
+
 ## 1.2.1
 
 - Updated dotenv to 18.0.8 and Zod to 4.6.7; retained MCP SDK 1.32.1 and SSH2 1.17.0.

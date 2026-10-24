@@ -30,7 +30,7 @@ export class StateMaintenance {
       bytes += (await fs.stat(destination)).size;
     }
     return { id, state, eligible: safeStates.has(state.state), bytes, unknown: !safeStates.has(state.state) && state.state !== 'expired',
-      fingerprint: crypto.createHash('sha256').update(bytesState).digest('hex') };
+      fingerprint: await this.downloads.cleanupFingerprint(id, state) };
   }
   async entries() {
     const entries = await fs.readdir(this.downloads.base).catch(error => { if (error.code === 'ENOENT') return []; throw error; });

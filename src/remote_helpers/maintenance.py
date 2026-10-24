@@ -37,7 +37,7 @@ def maintenance_guard(action):
     return guarded
 
 def state_inventory(category=None, cutoff=None):
-    stats = {key: {'bytes': 0, 'count': 0, 'unknown_count': 0} for key in ('operation_logs', 'operations_metadata', 'file_backups')}
+    stats = {key: {'bytes': 0, 'count': 0, 'unknown_count': 0} for key in ('operation_logs', 'operations_metadata', 'file_backups', 'history_cache', 'cleanup_plans', 'staged_uploads', 'runner_sources')}
     items = []
     root = state_root()
     operations = root / 'operations'
@@ -88,6 +88,20 @@ def state_inventory(category=None, cutoff=None):
                 items.append({'relative': relative, 'fingerprint': fingerprint, 'metadata_hash': digest(meta.read_bytes())})
         except (OSError, ValueError, KeyError, TypeError):
             stats['file_backups']['unknown_count'] += 1
+    for relative, group, pattern in [('', 'history_cache', r'history(?:-invalid-[a-f0-9]{32})?\.sqlite(?:-journal|-wal|-shm)?'),
+                                     ('cleanup-plans', 'cleanup_plans', r'[a-f0-9]{32}\.json'),
+                                     ('uploads', 'staged_uploads', r'[a-f0-9]{32}'),
+                                     ('', 'runner_sources', r'runner-[a-f0-9]{16}\.py')]:
+        directory = root / relative
+        for file in directory.iterdir() if directory.exists() else []:
+            if not re.fullmatch(pattern, file.name):
+                continue
+            try:
+                checked = state_file(str(pathlib.PurePosixPath(relative) / file.name))
+                stats[group]['bytes'] += checked.stat().st_size
+                stats[group]['count'] += 1
+            except (OSError, ValueError):
+                stats[group]['unknown_count'] += 1
     return stats, items
 
 def state_usage(a):

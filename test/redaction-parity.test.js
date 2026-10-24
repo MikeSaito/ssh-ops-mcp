@@ -10,7 +10,7 @@ test('JavaScript and Python masking share exact fixtures, newlines and idempoten
   const fixtures = JSON.parse(await fs.readFile(new URL('./redaction-fixtures.json', import.meta.url), 'utf8'));
   const security = await fs.readFile(new URL('../src/remote_helpers/security.py', import.meta.url), 'utf8');
   const script = 'import json,re,sys; p=json.load(sys.stdin); ns={"re":re}; exec(p["source"],ns); print(json.dumps([[ns["masked"](x["input"]),ns["masked"](x["output"])] for x in p["fixtures"]]))';
-  const result = spawnSync('python', ['-B', '-c', script], { input: JSON.stringify({ source: security, fixtures }), encoding: 'utf8' });
+  const result = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-B', '-c', script], { input: JSON.stringify({ source: security, fixtures }), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   const python = JSON.parse(result.stdout);
   for (const [index, fixture] of fixtures.entries()) {

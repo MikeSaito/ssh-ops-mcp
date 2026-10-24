@@ -19,7 +19,7 @@ Multi-server profiles select routing and local state, not permissions. Any conne
 
 ## Known limits
 
-Plaintext passwords/passphrases still exist in process memory and may live in env files; this is not an OS credential vault. Child download workers inherit the connection environment. Local code running as the same user, remote root, local root/SYSTEM and a compromised client remain trusted. SSH can protect transit, not the behavior of a compromised endpoint.
+Plaintext passwords/passphrases still exist in process memory and may live in env files; this is not an OS credential vault. Download workers receive only the selected connection snapshot over IPC and a filtered system environment, not the other profiles' credentials. Local code running as the same user, remote root, local root/SYSTEM and a compromised client remain trusted. SSH can protect transit, not the behavior of a compromised endpoint.
 
 Operations are deduplicated launches, not database transactions. Disconnect/timeout is not a rollback. Commands can deliberately detach processes outside cancellation groups. Deploy locks are per remote account and cooperatively used; arbitrary shell commands can bypass them. Do not replay unknown modifying work automatically.
 
@@ -28,5 +28,9 @@ Sensitive downloads are plaintext unless `encrypt: true` is requested. Explicit 
 Tool outputs remain text blocks, sometimes containing JSON; `structuredContent` is not supplied. This release does not implement SSH MFA, jump hosts, SSH configuration/certificates, remote Windows helpers or a hosted/cloud MCP endpoint. Generated-key loopback tests are not an independent security audit or proof of compatibility with every SSH-agent/hardware-key implementation.
 
 ## Reporting
+
+Local mutexes require a local filesystem with working SQLite locks, not a network share. Keep permanent mutex files; stop every old instance/worker before migration. Audit failure before dispatch prevents execution; final audit failure produces a warning while retaining the original result. A warning is not permission to replay a command.
+
+Remote maintenance is manual and preview-first. It never removes operation status/spec hashes or unlocks unknown work. It rechecks known file identities and content before removal, but it is not a transaction against arbitrary malicious same-account filesystem changes. Backups without complete integrity metadata are retained. State usage reports managed categories, not every byte on the server.
 
 Do not report credentials or exploitable details in a public issue. The repository owner should enable GitHub private vulnerability reporting before publication; once enabled, use the Security tab's private reporting flow. If unavailable, request a private contact channel without disclosing the vulnerability publicly. Supply synthetic reproduction data and rotate any accidentally disclosed credential immediately. Current release line: 1.x; no support SLA or audited-security claim.

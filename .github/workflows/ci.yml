@@ -37,4 +37,4 @@ jobs:
       - run: npm audit --omit=dev
       - run: npm pack --dry-run
       - name: Parse remote helper (no execution, no bytecode files)
-        run: python -c "import ast,pathlib; ast.parse(pathlib.Path('src/remote_helper.py').read_text(encoding='utf-8'))"
+        run: python -c "import ast,pathlib; [ast.parse(f.read_text(encoding='utf-8')) for f in pathlib.Path('src').rglob('*.py')]"
