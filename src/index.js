@@ -8,6 +8,7 @@ import { createTools } from './tools.js';
 import { Downloads } from './downloads.js';
 import { redact, audit } from './security.js';
 import { auditedCall } from './audited-call.js';
+import { packageInfo } from './version.js';
 
 function sanitize(value) {
   if (typeof value === 'string') return redact(value);
@@ -19,7 +20,7 @@ const result = value => ({ content: [{ type: 'text', text: typeof value === 'str
 const tagged = (registry, profile, value) => registry.multi ? { ...(value && typeof value === 'object' && !Array.isArray(value) ? value : { result: value }), server_id: profile.id } : value;
 
 export async function start(registry) {
-  const server = new McpServer({ name: 'ssh-ops-mcp', version: '1.2.1' }, {
+  const server = new McpServer(packageInfo, {
     instructions: 'Call ssh_servers_list to discover profiles. In multi-server mode every action requires explicit server_id; there is no active server. Keep the same server_id when polling operations or transfers. Use ssh_operation_start for deploys, migrations and long work. Always set resource to the same app name or absolute deployment directory across chats to exclude concurrent deploys. Retain request_id/operation_id and poll status/logs after disconnection. Never repeat unknown modifying work. Timeout/cancel terminate the operation process group; disconnection does not. Before editing, hash and preview, then apply with expected_sha256. Use ssh_download_file then status/resume with transfer_id for large files. Enable encrypt for sensitive dumps. Tools have only the configured SSH account privileges; ADMIN is a warning, not a security boundary. Diagnostics never run as root. Keep secrets out of commands and output.',
   });
   const contexts = new Map([...registry.profiles].map(([id, profile]) => {

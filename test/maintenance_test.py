@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from helper_loader import helper_source
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux helper only')
@@ -14,7 +15,7 @@ class MaintenanceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='sshops-maintenance-')
         self.root = pathlib.Path(self.temp.name)
-        source = (pathlib.Path(__file__).parents[1] / 'src/remote_helper.py').read_text(encoding='utf-8')
+        source = helper_source()
         self.source = re.sub(r'^STATE_ROOT = .*', 'STATE_ROOT = pathlib.Path(' + repr(str(self.root / 'state')) + ')', source, flags=re.M)
         self.ns = {'__name__': 'maintenance_tests'}
         exec(compile(self.source, 'helper-tests', 'exec'), self.ns)

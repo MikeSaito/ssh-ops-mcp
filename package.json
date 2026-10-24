@@ -1,6 +1,6 @@
 {
   "name": "ssh-ops-mcp",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "Local SSH MCP for recoverable operations, safe file changes and protected transfers",
@@ -10,7 +10,7 @@
   "bugs": { "url": "https://github.com/MikeSaito/ssh-ops-mcp/issues" },
   "engines": { "node": ">=22.13.0" },
   "bin": { "ssh-ops-mcp": "bin/ssh-ops-mcp.js" },
-  "files": ["bin/", "src/", "examples/", "scripts/", "test/", "README.md", "README.ru.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "CHANGELOG.md", "LICENSE", ".env.example"],
+  "files": ["bin/", "src/", "examples/", "scripts/", "test/", "docs/", "README.md", "README.ru.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "CHANGELOG.md", "LICENSE", ".env.example"],
   "scripts": {
     "start": "node bin/ssh-ops-mcp.js",
     "check": "node scripts/check-syntax.mjs",

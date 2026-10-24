@@ -148,13 +148,25 @@ export class Downloads {
     }
     return { expired_transfers_removed: removed };
   }
+  async cleanupFingerprint(id, state) {
+    const dir = this.directory(id), items = [];
+    for (const name of ['status.json', 'data.part', 'key.json', 'pause']) {
+      const file = path.join(dir, name);
+      const info = await fs.lstat(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (info && (!info.isFile() || info.isSymbolicLink())) throw new Error('Unsafe transfer cleanup target.');
+      items.push([name, info ? await fileIdentity(file) : null]);
+    }
+    items.push(['manifest', crypto.createHash('sha256').update(await fs.readFile(path.join(dir, 'status.json'))).digest('hex')]);
+    if (state.state === 'completed') items.push(['published', await fileIdentity(await transferPath(this.root, state.local_path))]);
+    return crypto.createHash('sha256').update(JSON.stringify(items)).digest('hex');
+  }
   async cleanup(id, expiredOnly = true, expectedFingerprint) {
     await this.status(id);
     const dir = this.directory(id);
     return localLock(path.join(dir, 'control.lock'), async () => {
       const state = await readJson(path.join(dir, 'status.json'));
       this.checkTarget(state);
-      if (expectedFingerprint && crypto.createHash('sha256').update(await fs.readFile(path.join(dir, 'status.json'))).digest('hex') !== expectedFingerprint) throw new Error('Transfer changed after cleanup preview.');
+      if (expectedFingerprint && await this.cleanupFingerprint(id, state) !== expectedFingerprint) throw new Error('Transfer changed after cleanup preview.');
       if (['starting', 'running', 'verifying', 'publishing'].includes(state.state) && await this.workerActive(id, state)) throw new Error('Pause and wait for the worker before cleanup.');
       if (expiredOnly && Date.parse(state.expires_at) > Date.now()) throw new Error('Retention has not expired; expired_only=false is an explicit deletion request.');
       if (state.state === 'completed') {

@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import { loadEnvironment, loadRegistry, buildConnectOptions, describeProfile } from '../src/config.js';
 import { redact } from '../src/security.js';
+import { packageInfo } from '../src/version.js';
 
 const args = process.argv.slice(2);
 let envFile, serversFile, check = false;
 try {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--help' || args[i] === '-h') {
-      console.log('SSH Ops MCP 1.2.1\nUsage: node bin/ssh-ops-mcp.js [--env-file /private/server.env | --servers-file /private/servers.json] [--check-config]\nAuthentication: password, private_key (optional passphrase), agent.\nMulti-server actions require server_id. Config checks are local and do not display credentials.');
+      console.log('SSH Ops MCP ' + packageInfo.version + '\nUsage: node bin/ssh-ops-mcp.js [--env-file /private/server.env | --servers-file /private/servers.json] [--check-config]\nAuthentication: password, private_key (optional passphrase), agent.\nMulti-server actions require server_id. Config checks are local and do not display credentials.');
       process.exit(0);
-    } else if (args[i] === '--version') { console.log('1.2.1'); process.exit(0); }
+    } else if (args[i] === '--version') { console.log(packageInfo.version); process.exit(0); }
     else if (args[i] === '--check-config') check = true;
     else if (args[i] === '--env-file' && args[i + 1] && !args[i + 1].startsWith('--') && !envFile) envFile = args[++i];
     else if (args[i] === '--servers-file' && args[i + 1] && !args[i + 1].startsWith('--') && !serversFile) serversFile = args[++i];

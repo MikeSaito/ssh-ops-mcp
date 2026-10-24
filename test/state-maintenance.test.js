@@ -21,14 +21,14 @@ test('local cleanup is preview-first, single-use, server-bound and preserves cha
     const plan = await maintenance.cleanup({ created_before: '2026-01-01T00:00:00Z' });
     assert.equal(plan.candidates.length, 2);
     const changed = '2'.padStart(32, '0');
-    await atomicJson(path.join(downloads.directory(changed), 'status.json'), { state: 'paused', created_at: 101 });
+    await fs.writeFile(path.join(downloads.directory(changed), 'data.part'), 'edited partial file');
     const foreign = new StateMaintenance(new Downloads(root, { SSH_HOST: 'beta.invalid', SSH_USERNAME: 'test' }));
     await assert.rejects(foreign.cleanup({ preview: false, plan_id: plan.plan_id }), /another server/);
     const result = await maintenance.cleanup({ preview: false, plan_id: plan.plan_id });
     assert.equal(result.removed.length, 1); assert.equal(result.skipped.length, 1);
     await assert.rejects(maintenance.cleanup({ preview: false, plan_id: plan.plan_id }), /already applied/);
     assert.equal((await downloads.status('1'.padStart(32, '0'))).state, 'expired');
-    assert.equal(await fs.readFile(path.join(downloads.directory(changed), 'data.part'), 'utf8'), 'synthetic data');
+    assert.equal(await fs.readFile(path.join(downloads.directory(changed), 'data.part'), 'utf8'), 'edited partial file');
     const usage = await maintenance.usage(1);
     assert.equal(usage.unknown_count, 1); assert.equal(usage.warning, 'state_budget_exceeded');
   } finally { await fs.rm(root, { recursive: true, force: true }); }

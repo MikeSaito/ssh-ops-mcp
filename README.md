@@ -10,7 +10,7 @@ A local, stdio-only MCP server for administering Linux hosts over SSH. Recover l
 
 - Password, private key, encrypted private key, or SSH-agent authentication; any SSH user and port.
 - SHA-256 server host-key pinning required by default; SSH-agent forwarding disabled.
-- 27 tools: server discovery, shell execution, persistent operations/reports, deployment locks, file preview/hash/write, SFTP uploads/downloads, network/service/journal diagnostics, and secret-presence checks.
+- 29 tools: server discovery, shell execution, persistent operations/reports, deployment locks, file preview/hash/write, SFTP uploads/downloads, network/service/journal diagnostics, secret-presence checks and previewed state maintenance.
 - Durable operation IDs, request deduplication, incremental logs and cancellation. Unknown outcomes are never silently retried.
 - Hash-checked atomic writes, optional staged validation, owner/mode preservation and private backups.
 - Detached downloads with byte progress, pause/resume, source integrity checks, private storage and optional authenticated encryption.
@@ -19,7 +19,13 @@ A local, stdio-only MCP server for administering Linux hosts over SSH. Recover l
 
 ## Requirements
 
-Local: Node.js 22 or newer, npm, Windows/macOS/Linux. Remote: Linux, an SSH server, Python 3 with its standard library, and SFTP enabled. Service/journal tools additionally require systemd. File/operation helper code uses Linux facilities and is not supported on Windows SSH servers.
+Local: Node.js 22.13 or newer, npm, Windows/macOS/Linux. Built-in SQLite is experimental in Node.js 22. Remote: Linux, an SSH server, Python 3 with its standard library (including sqlite3), and SFTP enabled. History falls back to file search when sqlite3 is unavailable. Service/journal tools additionally require systemd. File/operation helper code uses Linux facilities and is not supported on Windows SSH servers.
+
+## Upgrading to 1.3
+
+Stop all older MCP instances and pause/wait for download workers before replacing source files. Do not mix versions sharing state. Existing connections, operation IDs and downloads are preserved. Local mutex files are permanent; never delete them to unlock a task. See [recovery and migration](docs/recovery.md).
+
+History now has a recoverable metadata-only index. `ssh_download_list` sorts by creation time and supports cursors. `ssh_state_usage` reports known storage; `ssh_state_cleanup` requires a preview plan before deleting selected old data. Remote cleanup is manual, and operation deduplication records are never removed. See [state maintenance](docs/state.md).
 
 Install from source using the instructions below.
 
