@@ -80,6 +80,11 @@ def state_root():
     return STATE_ROOT
 
 def save_json(file, value):
+    if file.name == 'status.json' and file.parent.parent.name == 'operations':
+        return history_save(file, value)
+    return plain_save_json(file, value)
+
+def plain_save_json(file, value):
     fd, name = tempfile.mkstemp(prefix=".state-", dir=file.parent)
     try:
         with os.fdopen(fd, "w") as handle:
@@ -460,9 +465,9 @@ def run(operation_id):
             data.update(finished_at=time.time(), truncated=truncated,
                         duration_ms=max(0, int(round((time.monotonic() - started) * 1000))))
             data.pop("pid", None)
-            save_json(directory / "status.json", data)
             # Commands are removed after completion; only safe labels and bounded logs remain.
             (directory / "spec.json").unlink(missing_ok=True)
+            save_json(directory / "status.json", data)
 
 def logs(a):
     data = status(a)
@@ -493,7 +498,8 @@ def logs(a):
     piece = encoded[offset:end]
     return {"operation_id": a["operation_id"], "state": data["state"], "text": piece.decode(),
             "next_offset": min(offset + len(piece), len(encoded)), "more": offset + len(piece) < len(encoded),
-            "truncated": data.get("truncated", {}).get(kind, False)}
+            "truncated": data.get("truncated", {}).get(kind, False),
+            "logs_cleanup_performed": (directory / 'logs-cleaned.json').exists()}
 
 def cancel(a):
     data = status(a)
@@ -502,7 +508,7 @@ def cancel(a):
         os.close(fd)
     return dict(data, cancellation_requested=data["state"] in ("starting", "running"))
 
-def listing(a):
+def listing_scan(a):
     directory = state_root() / "operations"
     query = a.get("query", "")
     if not isinstance(query, str) or len(query) > 200:
@@ -570,6 +576,156 @@ def listing(a):
         next_cursor = base64.urlsafe_b64encode(json.dumps({"filter_hash": filter_hash, "before": [last["created_at"], last["operation_id"]]}).encode()).decode().rstrip("=")
     return {"operations": selected, "next_cursor": next_cursor, "more": more,
             "matched_remaining": len(result), "unavailable_count": unavailable}
+
+
+# The index is a disposable cache. Launch deduplication always reads status.json.
+def history_db():
+    import sqlite3
+    file = state_root() / 'history.sqlite'
+    fd = os.open(file, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    info = os.fstat(fd)
+    os.close(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        raise ValueError('Unsafe history index.')
+    os.chmod(file, 0o600)
+    db = sqlite3.connect(file, timeout=2)
+    try:
+        db.executescript('''CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, created REAL, state TEXT, resource TEXT, search TEXT, summary TEXT);
+      CREATE INDEX IF NOT EXISTS history_created ON operations(created DESC,id DESC);
+      CREATE INDEX IF NOT EXISTS history_state ON operations(state,created DESC,id DESC);
+      CREATE INDEX IF NOT EXISTS history_resource ON operations(resource,created DESC,id DESC);
+      CREATE TABLE IF NOT EXISTS unavailable (id TEXT PRIMARY KEY);''')
+    except Exception:
+        db.close()
+        raise
+    return db
+
+def history_upsert(db, operation_id):
+    try:
+        item = operation_summary(status({'operation_id': operation_id}))
+        search = '\n'.join(str(item.get(key) or '') for key in ('title', 'request_id', 'operation_id', 'resource')).casefold()
+        db.execute('INSERT OR REPLACE INTO operations VALUES (?,?,?,?,?,?)',
+                   (operation_id, item['created_at'], item['state'], item['resource'], search, json.dumps(item)))
+        db.execute('DELETE FROM unavailable WHERE id=?', (operation_id,))
+    except (OSError, ValueError, KeyError, TypeError):
+        db.execute('DELETE FROM operations WHERE id=?', (operation_id,))
+        db.execute('INSERT OR IGNORE INTO unavailable VALUES (?)', (operation_id,))
+
+def history_save(file, value):
+    dirty = state_root() / 'history-dirty'
+    secure_dir(dirty)
+    # Durable intent first: a crash between state replacement and cache update is repairable.
+    with lock(state_root() / '.history.lock'):
+        marker = dirty / file.parent.name
+        fd = os.open(marker, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        os.close(fd)
+        sync_parent(marker)
+        plain_save_json(file, value)
+        try:
+            with contextlib.closing(history_db()) as db, db:
+                history_upsert(db, file.parent.name)
+            marker.unlink()
+        except Exception:
+            pass  # Cache failure never changes a persisted operation result.
+
+def listing(a):
+    # Reuse the old validator/cursor rules, but push filters and pagination into SQLite.
+    query = a.get('query', '')
+    states = a.get('states')
+    allowed = {'starting', 'running', 'completed', 'failed', 'cancelled', 'timed_out', 'process_lost'}
+    if not isinstance(query, str) or len(query) > 200 or states is not None and (not isinstance(states, list) or not 1 <= len(states) <= 7 or any(x not in allowed for x in states)):
+        raise ValueError('Invalid history filters.')
+    def timestamp(value):
+        if value is None:
+            return None
+        parsed = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            raise ValueError('History timestamps require a timezone.')
+        return parsed.timestamp()
+    after, before = timestamp(a.get('created_after')), timestamp(a.get('created_before'))
+    if after is not None and before is not None and after > before:
+        raise ValueError('created_after must not be later than created_before.')
+    resource = resource_name(a.get('resource'))
+    limit = a.get('limit', 100)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+        raise ValueError('History limit must be 1..100.')
+    criteria = {'query': query.casefold(), 'states': sorted(set(states)) if states else None, 'resource': resource, 'after': after, 'before': before}
+    filter_hash = digest(json.dumps(criteria, sort_keys=True).encode())
+    boundary = None
+    if a.get('cursor'):
+        try:
+            cursor = a['cursor']
+            if not isinstance(cursor, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,2048}', cursor):
+                raise ValueError()
+            page = json.loads(base64.urlsafe_b64decode(cursor + '=' * (-len(cursor) % 4)))
+            boundary = page['before']
+            if page['filter_hash'] != filter_hash or not isinstance(boundary, list) or len(boundary) != 2 or not isinstance(boundary[0], (int, float)) or not re.fullmatch(r'[a-f0-9]{32}', boundary[1]):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError):
+            raise ValueError('Invalid history cursor or changed filters. Start a new search.') from None
+    try:
+        with lock(state_root() / '.history.lock'), contextlib.closing(history_db()) as db, db:
+            directory = state_root() / 'operations'
+            if not db.execute("SELECT 1 FROM metadata WHERE key='initialized'").fetchone():
+                db.execute('DELETE FROM operations')
+                db.execute('DELETE FROM unavailable')
+                for entry in directory.iterdir() if directory.exists() else []:
+                    if re.fullmatch(r'[a-f0-9]{32}', entry.name) and not entry.is_symlink() and entry.is_dir():
+                        history_upsert(db, entry.name)
+                db.execute("INSERT INTO metadata VALUES ('initialized','1')")
+            dirty = state_root() / 'history-dirty'
+            directory_time = str(directory.stat().st_mtime_ns) if directory.exists() else 'missing'
+            previous_time = db.execute("SELECT value FROM metadata WHERE key='directory_time'").fetchone()
+            if not previous_time or previous_time[0] != directory_time:
+                known = {row[0] for row in db.execute('SELECT id FROM operations UNION SELECT id FROM unavailable')}
+                for entry in directory.iterdir() if directory.exists() else []:
+                    if re.fullmatch(r'[a-f0-9]{32}', entry.name) and entry.name not in known and not entry.is_symlink() and entry.is_dir():
+                        history_upsert(db, entry.name)
+                db.execute("INSERT OR REPLACE INTO metadata VALUES ('directory_time',?)", (directory_time,))
+            markers = list(dirty.iterdir()) if dirty.exists() else []
+            refresh = {row[0] for row in db.execute("SELECT id FROM operations WHERE state IN ('starting','running','process_lost')")}
+            refresh.update(x.name for x in markers if re.fullmatch(r'[a-f0-9]{32}', x.name))
+            for operation_id in refresh:
+                history_upsert(db, operation_id)
+            # Commit cache data before discarding durable dirty markers.
+            db.commit()
+            for marker in markers:
+                if re.fullmatch(r'[a-f0-9]{32}', marker.name) and not marker.is_symlink():
+                    marker.unlink(missing_ok=True)
+            where, params = [], []
+            if criteria['query']:
+                where.append('instr(search,?)>0'); params.append(criteria['query'])
+            if states:
+                where.append('state IN (' + ','.join('?' for _ in states) + ')'); params.extend(states)
+            if resource is not None:
+                where.append('resource=?'); params.append(resource)
+            if after is not None:
+                where.append('created>=?'); params.append(after)
+            if before is not None:
+                where.append('created<=?'); params.append(before)
+            if boundary:
+                where.append('(created<? OR (created=? AND id<?))'); params.extend([boundary[0], boundary[0], boundary[1]])
+            clause = ' WHERE ' + ' AND '.join(where) if where else ''
+            count = db.execute('SELECT count(*) FROM operations' + clause, params).fetchone()[0]
+            selected = [json.loads(row[0]) for row in db.execute('SELECT summary FROM operations' + clause + ' ORDER BY created DESC,id DESC LIMIT ?', params + [limit])]
+            unavailable = db.execute('SELECT count(*) FROM unavailable').fetchone()[0]
+            more, next_cursor = count > limit, None
+            if more:
+                last = selected[-1]
+                next_cursor = base64.urlsafe_b64encode(json.dumps({'filter_hash': filter_hash, 'before': [last['created_at'], last['operation_id']]}).encode()).decode().rstrip('=')
+            return {'operations': selected, 'next_cursor': next_cursor, 'more': more, 'matched_remaining': count, 'unavailable_count': unavailable}
+    except Exception as error:
+        if getattr(error, 'sqlite_errorcode', None) in (11, 26):
+            with lock(state_root() / '.history.lock'):
+                index = state_root() / 'history.sqlite'
+                try:
+                    index.rename(state_root() / ('history-invalid-' + uuid.uuid4().hex + '.sqlite'))
+                except OSError:
+                    pass
+        value = listing_scan(a)
+        value['warnings'] = [{'code': 'history_index_unavailable', 'message': 'History was read from operation files; no modifying action was repeated.'}]
+        return value
 
 def checked_file(file):
     if not file.is_absolute():
@@ -670,6 +826,8 @@ def write(a):
                     os.fsync(handle.fileno())
             os.replace(temp_name, file)
             sync_parent(file)
+            if backup:
+                finish_backup(backup)
             return {"path": str(file), "sha256": digest(content), "backup": str(backup) if backup else None}
         finally:
             if os.path.exists(temp_name):
@@ -739,6 +897,8 @@ def upload_commit(a):
                     os.fsync(out.fileno())
             os.replace(staged, file)
             sync_parent(file)
+            if backup:
+                finish_backup(backup)
             source.unlink()
             return dict(file_hash({"path": str(file)}), backup=str(backup) if backup else None)
         finally:
@@ -874,12 +1034,182 @@ def probe(a):
             conn.close()
     return result
 
+def state_file(relative):
+    root = state_root()
+    parts = pathlib.PurePosixPath(relative).parts
+    if not parts or any(x in ('..', '.') for x in parts) or pathlib.PurePosixPath(relative).is_absolute():
+        raise ValueError('Invalid state path.')
+    current = root
+    for part in parts:
+        current = current / part
+        info = current.lstat()
+        if stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid():
+            raise ValueError('Unsafe state file.')
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError('State target must be regular.')
+    return current
+
+def state_fingerprint(file):
+    info = file.stat()
+    h = hashlib.sha256()
+    with file.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(65536), b''):
+            h.update(chunk)
+    after = file.stat()
+    before_id = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    if before_id != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+        raise ValueError('State file changed during inspection.')
+    return {'size': info.st_size, 'sha256': h.hexdigest(), 'identity': [str(x) for x in before_id]}
+
+def finish_backup(file):
+    save_json(file.with_suffix('.bak.json'), {'created_at': time.time(), 'complete': True, 'fingerprint': state_fingerprint(file)})
+
+def maintenance_guard(action):
+    def guarded(a):
+        with lock(state_root() / '.maintenance.lock'):
+            return action(a)
+    return guarded
+
+def state_inventory(category=None, cutoff=None):
+    stats = {key: {'bytes': 0, 'count': 0, 'unknown_count': 0} for key in ('operation_logs', 'operations_metadata', 'file_backups')}
+    items = []
+    root = state_root()
+    operations = root / 'operations'
+    for entry in operations.iterdir() if operations.exists() else []:
+        if not re.fullmatch(r'[a-f0-9]{32}', entry.name) or entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            state_path = state_file('operations/' + entry.name + '/status.json')
+            data = status({'operation_id': entry.name})
+            terminal = data.get('state') in ('completed', 'failed', 'cancelled', 'timed_out')
+            old = terminal and data.get('finished_at', float('inf')) < (cutoff or 0) and data.get('created_at', float('inf')) < (cutoff or 0)
+            for name in ('status.json', 'spec.json'):
+                if not (entry / name).exists():
+                    continue
+                file = state_file('operations/' + entry.name + '/' + name)
+                stats['operations_metadata']['bytes'] += file.stat().st_size
+                stats['operations_metadata']['count'] += 1
+            if not terminal:
+                stats['operation_logs']['unknown_count'] += 1
+            for name in ('stdout.log', 'stderr.log'):
+                if not (entry / name).exists():
+                    continue
+                relative = 'operations/' + entry.name + '/' + name
+                file = state_file(relative)
+                stats['operation_logs']['bytes'] += file.stat().st_size
+                stats['operation_logs']['count'] += 1
+                if category == 'operation_logs' and old:
+                    items.append({'relative': relative, 'operation_id': entry.name, 'fingerprint': state_fingerprint(file), 'status_hash': digest(state_path.read_bytes())})
+        except (OSError, ValueError, KeyError, TypeError):
+            stats['operation_logs']['unknown_count'] += 1
+    backups = root / 'backups'
+    for file in backups.iterdir() if backups.exists() else []:
+        if not re.fullmatch(r'[a-f0-9]{32}\.bak', file.name):
+            continue
+        try:
+            relative = 'backups/' + file.name
+            file = state_file(relative)
+            stats['file_backups']['bytes'] += file.stat().st_size
+            stats['file_backups']['count'] += 1
+            meta = state_file(relative + '.json')
+            metadata = load_json(meta)
+            if not metadata.get('complete'):
+                raise ValueError('Incomplete backup.')
+            if category == 'file_backups' and metadata.get('created_at', float('inf')) < (cutoff or 0):
+                fingerprint = state_fingerprint(file)
+                if fingerprint != metadata.get('fingerprint'):
+                    raise ValueError('Backup changed.')
+                items.append({'relative': relative, 'fingerprint': fingerprint, 'metadata_hash': digest(meta.read_bytes())})
+        except (OSError, ValueError, KeyError, TypeError):
+            stats['file_backups']['unknown_count'] += 1
+    return stats, items
+
+def state_usage(a):
+    stats, _ = state_inventory()
+    total = sum(x['bytes'] for x in stats.values())
+    warn = a.get('warn_bytes')
+    return {'categories': stats, 'bytes': total, 'partial': any(x['unknown_count'] for x in stats.values()),
+            'warning': 'state_budget_exceeded' if warn and total > warn else None}
+
+def state_cleanup(a):
+    category = a.get('category')
+    if category not in ('operation_logs', 'file_backups'):
+        raise ValueError('Remote cleanup requires an explicit category.')
+    target = a.get('target_identity')
+    if not isinstance(target, str) or not re.fullmatch(r'[a-f0-9]{24}', target):
+        raise ValueError('Missing selected server identity.')
+    plans = state_root() / 'cleanup-plans'
+    secure_dir(plans)
+    operations = state_root() / 'operations'
+    secure_dir(operations)
+    with lock(state_root() / '.maintenance.lock'), lock(operations / '.registry.lock'):
+        if a.get('preview', True):
+            value = a.get('created_before')
+            if not isinstance(value, str):
+                raise ValueError('Preview requires a past created_before timestamp.')
+            parsed = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+            if parsed.tzinfo is None or parsed.timestamp() > time.time():
+                raise ValueError('Preview requires a past created_before timestamp with timezone.')
+            limit = a.get('max_items', 100)
+            if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+                raise ValueError('max_items must be 1..100.')
+            stats, candidates = state_inventory(category, parsed.timestamp())
+            candidates.sort(key=lambda x: x['relative'])
+            selected = candidates[:limit]
+            plan_id = uuid.uuid4().hex
+            expires = time.time() + 900
+            save_json(plans / (plan_id + '.json'), {'target': target, 'scope': 'remote', 'category': category, 'expires_at': expires, 'items': selected})
+            return {'preview': True, 'plan_id': plan_id, 'expires_at': utc(expires), 'more': len(candidates) > limit,
+                    'unavailable_count': stats[category]['unknown_count'],
+                    'candidates': [{'id': x['relative'], 'bytes': x['fingerprint']['size']} for x in selected]}
+        plan_id = a.get('plan_id', '')
+        if not re.fullmatch(r'[a-f0-9]{32}', plan_id):
+            raise ValueError('Apply requires plan_id from preview.')
+        plan_file = state_file('cleanup-plans/' + plan_id + '.json')
+        plan = load_json(plan_file)
+        if plan.get('target') != target or plan.get('category') != category or plan.get('scope') != 'remote' or plan.get('expires_at', 0) <= time.time() or not isinstance(plan.get('items'), list) or len(plan['items']) > 100:
+            raise ValueError('Cleanup plan expired or belongs to another server/category. Preview again.')
+        if plan.get('applied'):
+            raise ValueError('Cleanup plan was already applied. Preview again.')
+        save_json(plan_file, dict(plan, applied=True))
+        removed, skipped = [], []
+        for item in plan['items']:
+            relative = item.get('relative', '')
+            try:
+                pattern = r'operations/[a-f0-9]{32}/(?:stdout|stderr)\.log' if category == 'operation_logs' else r'backups/[a-f0-9]{32}\.bak'
+                if not re.fullmatch(pattern, relative):
+                    raise ValueError('Unknown cleanup target.')
+                file = state_file(relative)
+                if state_fingerprint(file) != item['fingerprint']:
+                    raise ValueError('File changed.')
+                if category == 'operation_logs':
+                    operation_id = relative.split('/')[1]
+                    current = status({'operation_id': operation_id})
+                    if current['state'] not in ('completed', 'failed', 'cancelled', 'timed_out') or digest(state_file('operations/' + operation_id + '/status.json').read_bytes()) != item['status_hash']:
+                        raise ValueError('Operation changed.')
+                    save_json(operation_dir(operation_id) / 'logs-cleaned.json', {'removed_at': time.time()})
+                else:
+                    metadata = state_file(relative + '.json')
+                    if digest(metadata.read_bytes()) != item['metadata_hash']:
+                        raise ValueError('Backup metadata changed.')
+                file.unlink()
+                if category == 'file_backups':
+                    metadata.unlink()
+                removed.append(relative)
+            except (OSError, ValueError, KeyError, TypeError):
+                skipped.append({'id': relative, 'code': 'changed_or_unavailable'})
+        return {'plan_id': plan_id, 'removed': removed, 'skipped': skipped}
+
+write = maintenance_guard(write)
+upload_commit = maintenance_guard(upload_commit)
+
 def dispatch(action, args, source):
     actions = {"status": status, "report": report, "logs": logs, "cancel": cancel, "list": listing,
                "file_hash": file_hash, "file_snapshot": file_snapshot, "write": write, "read": read,
                "upload_prepare": upload_prepare, "upload_commit": upload_commit,
                "service": service, "journal": journal, "secret_presence": secret_presence,
-               "probe": probe, "resource_status": resource_status, "resource_unlock": resource_unlock}
+               "probe": probe, "resource_status": resource_status, "resource_unlock": resource_unlock,
+               "state_usage": state_usage, "state_cleanup": state_cleanup}
     if action == "start":
         return start(args, source)
     if action not in actions:
