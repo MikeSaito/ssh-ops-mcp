@@ -52,7 +52,7 @@ test('SDK lists every tool schema and validates defaults before invoking handler
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 28);
+    assert.equal(listed.tools.length, 31);
     for (const tool of listed.tools) {
       assert.equal(tool.inputSchema.type, 'object', tool.name);
       assert.ok(tool.inputSchema.required.includes('server_id'), tool.name);

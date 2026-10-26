@@ -18,7 +18,7 @@ test('public entrypoint initializes MCP and executes over the test SSH server', 
   let errors = ''; transport.stderr?.on('data', data => { errors += data.toString(); });
   try {
     await client.connect(transport);
-    const listed = await client.listTools(); assert.equal(listed.tools.length, 29);
+    const listed = await client.listTools(); assert.equal(listed.tools.length, 32);
     assert.ok(listed.tools.some(tool => tool.name === 'ssh_operation_report'));
     assert.ok(listed.tools.find(tool => tool.name === 'ssh_operation_start').inputSchema.properties.steps);
     assert.ok(listed.tools.find(tool => tool.name === 'ssh_operation_list').inputSchema.properties.cursor);
@@ -38,7 +38,7 @@ test('env-file works from a different cwd, CLI is secret-safe and rejects invali
   try {
     const file = path.join(dir, 'server.env');
     await fs.writeFile(file, Object.entries(server.env).map(([key, value]) => key + '=' + value).join('\n'), { mode: 0o600 });
-    const run = args => spawnSync(process.execPath, [bin, ...args], { cwd: os.tmpdir(), env: cleanEnv, encoding: 'utf8' });
+    const run = args => spawnSync(process.execPath, ['--', bin, ...args], { cwd: os.tmpdir(), env: cleanEnv, encoding: 'utf8' });
     const valid = run(['--env-file', file, '--check-config']);
     assert.equal(valid.status, 0, valid.stderr); assert.equal(JSON.parse(valid.stdout).valid, true);
     assert.ok(!valid.stdout.includes('synthetic-password')); assert.equal(server.attempts.length, 0);

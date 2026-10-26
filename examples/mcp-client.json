@@ -2,7 +2,7 @@
   "mcpServers": {
     "ssh_ops": {
       "command": "node",
-      "args": ["/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--servers-file", "/absolute/private/servers.json"]
+      "args": ["--", "/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--servers-file", "/absolute/private/servers.json"]
     }
   }
 }

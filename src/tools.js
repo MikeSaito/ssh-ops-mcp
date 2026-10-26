@@ -124,6 +124,27 @@ export function createTools(profile) {
     validate_command: z.string().max(10000).optional().describe('Validator command containing {path}, replaced with shell-quoted staged path; never use the live path.'),
   }, (args) => rpc('write', args, 45_000));
 
+  const searchSchema = {
+    path: remotePath, pattern: z.string().min(1).max(1024).default('*'),
+    max_results: z.number().int().min(1).max(1000).default(100),
+    max_depth: z.number().int().min(0).max(32).default(8),
+    include_hidden: z.boolean().default(false), include_sensitive: z.boolean().default(false),
+  };
+  tool('ssh_find_files', 'Find regular files by glob within one filesystem. No symlink traversal. Bounded work/output; truncated means incomplete. Hidden and common secret files excluded by default.', searchSchema,
+    args => rpc('search', args, 15000), true);
+  tool('ssh_search_text', 'Search literal UTF-8 text, returning paths and line numbers. No regular expressions. Bounded work/output; redaction is not a secrecy guarantee.', {
+    ...searchSchema, text: z.string().min(1).max(4096), case_sensitive: z.boolean().default(true),
+  }, args => rpc('search', args, 15000), true);
+  tool('ssh_edit_file', 'ADMIN: exact replacements on server-side original bytes with expected SHA-256. Preview by default; preview=false applies atomically with validation and a private backup. Ambiguous matches preserve the original.', {
+    path: remotePath, expected_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    edits: z.array(z.object({ old_text: z.string().min(1).max(1000000), new_text: z.string().max(1000000), expected_matches: z.number().int().min(1).max(100).default(1) })).min(1).max(50),
+    preview: z.boolean().default(true), backup: z.boolean().default(true),
+    validate_command: z.string().max(10000).optional(),
+  }, args => {
+    if (args.edits.reduce((size, edit) => size + Buffer.byteLength(edit.old_text) + Buffer.byteLength(edit.new_text), 0) > 5000000) throw new Error('Combined edits exceed 5 MiB.');
+    return rpc('write', args, 45000);
+  });
+
   tool('ssh_upload_file', 'ADMIN: SFTP binary upload staged privately then atomically installed after expected hash comparison. Local source must be under transfers/. Existing owner/mode are preserved.', {
     local_path: z.string().min(1), remote_path: remotePath, expected_sha256: expectedHash, mode: modeSchema,
   }, async ({ local_path, remote_path, expected_sha256, mode }) => {

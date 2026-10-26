@@ -9,5 +9,8 @@
 *.toml text eol=lf
 *.example text eol=lf
 .gitignore text eol=lf
+.dockerignore text eol=lf
 .gitattributes text eol=lf
 LICENSE text eol=lf
+Dockerfile text eol=lf
+Dockerfile.alpine text eol=lf

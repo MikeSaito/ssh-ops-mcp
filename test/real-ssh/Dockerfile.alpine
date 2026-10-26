@@ -1,0 +1,9 @@
+FROM mirror.gcr.io/library/node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
+RUN apk add --no-cache openssh-server openssh-sftp-server python3 bash shadow \
+    && useradd -m -s /bin/ash synthetic \
+    && printf 'synthetic:synthetic-fixture-password\n' | chpasswd \
+    && mkdir -p /run/sshd /usr/lib/openssh \
+    && ln -sf /usr/lib/ssh/sftp-server /usr/lib/openssh/sftp-server
+COPY test/real-ssh/entry.sh /usr/local/bin/sshops-fixture
+RUN sed -i 's/\r$//' /usr/local/bin/sshops-fixture && chmod 755 /usr/local/bin/sshops-fixture
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/sshops-fixture"]

@@ -55,7 +55,33 @@ def write(a):
         before, expected, info = current(file)
         if "expected_sha256" not in a or a["expected_sha256"] != expected:
             raise ValueError("File changed or expected_sha256 missing. Inspect/hash it and preview again.")
-        content = a["content"].encode()
+        if "edits" in a:
+            if not info:
+                raise ValueError("Exact edit requires an existing file.")
+            try:
+                text = before.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError("Exact edit requires UTF-8 text.")
+            if b"\x00" in before:
+                raise ValueError("Binary files cannot be edited as text.")
+            edits = a["edits"]
+            if not isinstance(edits, list) or not 1 <= len(edits) <= 50:
+                raise ValueError("Provide 1-50 exact edits.")
+            for edit in edits:
+                old, new = edit["old_text"], edit["new_text"]
+                count = edit.get("expected_matches", 1)
+                if not isinstance(old, str) or not old or not isinstance(new, str) or type(count) is not int or not 1 <= count <= 100:
+                    raise ValueError("Invalid exact edit.")
+                if "[REDACTED]" in old or "[REDACTED]" in new:
+                    raise ValueError("Do not use masked output as replacement text.")
+                if text.count(old) != count:
+                    raise ValueError("Exact edit match count differs; original preserved.")
+                if len(text.encode()) + count * (len(new.encode()) - len(old.encode())) > MAX_TEXT:
+                    raise ValueError("Edited text exceeds 5 MiB.")
+                text = text.replace(old, new)
+            content = text.encode()
+        else:
+            content = a["content"].encode()
         if len(content) > MAX_TEXT:
             raise ValueError("Text exceeds 5 MiB.")
         if a.get("preview", False):

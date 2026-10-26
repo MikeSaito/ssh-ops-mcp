@@ -1,6 +1,6 @@
 {
   "name": "ssh-ops-mcp",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "description": "Local SSH MCP for recoverable operations, safe file changes and protected transfers",
@@ -10,13 +10,16 @@
   "bugs": { "url": "https://github.com/MikeSaito/ssh-ops-mcp/issues" },
   "engines": { "node": ">=22.13.0" },
   "bin": { "ssh-ops-mcp": "bin/ssh-ops-mcp.js" },
-  "files": ["bin/", "src/", "examples/", "scripts/", "test/", "docs/", "README.md", "README.ru.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "CHANGELOG.md", "LICENSE", ".env.example"],
+  "files": ["bin/", "src/", "examples/", "scripts/", "test/", "docs/", "README.md", "README.ru.md", "SECURITY.md", "CONTRIBUTING.md", "RELEASING.md", "CHANGELOG.md", "LICENSE", ".env.example", ".dockerignore"],
   "scripts": {
     "start": "node bin/ssh-ops-mcp.js",
     "check": "node scripts/check-syntax.mjs",
-    "test": "node --test test/*.test.js",
-    "test:operations": "python -B -m unittest discover -s test -p *_test.py -v",
+    "test": "node --import ./test/setup.js --test test/*.test.js",
+    "test:operations": "node scripts/test-python.mjs",
+    "test:real-ssh": "node scripts/real-ssh.mjs",
+    "bench:ssh": "node scripts/real-ssh.mjs --bench",
     "check:release": "node scripts/check-release.mjs",
+    "check:install": "node scripts/check-install.mjs",
     "prepack": "npm run check:release"
   },
   "dependencies": {

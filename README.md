@@ -10,7 +10,7 @@ A local, stdio-only MCP server for administering Linux hosts over SSH. Recover l
 
 - Password, private key, encrypted private key, or SSH-agent authentication; any SSH user and port.
 - SHA-256 server host-key pinning required by default; SSH-agent forwarding disabled.
-- 29 tools: server discovery, shell execution, persistent operations/reports, deployment locks, file preview/hash/write, SFTP uploads/downloads, network/service/journal diagnostics, secret-presence checks and previewed state maintenance.
+- 32 tools: server discovery, shell execution, persistent operations/reports, deployment locks, file preview/hash/write, SFTP uploads/downloads, network/service/journal diagnostics, secret-presence checks and previewed state maintenance.
 - Durable operation IDs, request deduplication, incremental logs and cancellation. Unknown outcomes are never silently retried.
 - Hash-checked atomic writes, optional staged validation, owner/mode preservation and private backups.
 - Detached downloads with byte progress, pause/resume, source integrity checks, private storage and optional authenticated encryption.
@@ -19,9 +19,15 @@ A local, stdio-only MCP server for administering Linux hosts over SSH. Recover l
 
 ## Requirements
 
-Local: Node.js 22.13 or newer, npm, Windows/macOS/Linux. Built-in SQLite is experimental in Node.js 22. Remote: Linux, an SSH server, Python 3 with its standard library (including sqlite3), and SFTP enabled. History falls back to file search when sqlite3 is unavailable. Service/journal tools additionally require systemd. File/operation helper code uses Linux facilities and is not supported on Windows SSH servers.
+Local: Node.js 22.13 or newer, npm, Windows/macOS/Linux. Built-in SQLite is experimental in Node.js 22. Remote: Linux, an SSH server, Python 3.8+ with bash and its standard library (including sqlite3), and SFTP enabled. History falls back to file search when sqlite3 is unavailable. Service/journal tools additionally require systemd. File/operation helper code uses Linux facilities and is not supported on Windows SSH servers.
 
-## Upgrading to 1.3
+## New in 1.4
+
+Use an optional per-launch access policy, local doctor checks, bounded file/text search, exact hash-checked edits and one-hop bastion connections. See [setup and access](docs/access.md) and [latency measurements](docs/benchmark.md). Production calls still open separate connections. Interactive terminals and user tunnels remain deferred.
+
+The preferred single-profile option is `--connection-file`. For legacy `--env-file`, invoke `node -- bin/ssh-ops-mcp.js --env-file FILE`; the first `--` prevents Node from handling that flag itself.
+
+## Upgrading from 1.3
 
 Stop all older MCP instances and pause/wait for download workers before replacing source files. Do not mix versions sharing state. Existing connections, operation IDs and downloads are preserved. Local mutex files are permanent; never delete them to unlock a task. See [recovery and migration](docs/recovery.md).
 
@@ -54,10 +60,10 @@ The example IP is reserved for documentation and the fingerprint is a placeholde
 Validate locally without contacting the server or displaying credentials:
 
 ```sh
-node bin/ssh-ops-mcp.js --env-file /absolute/private/server.env --check-config
+node bin/ssh-ops-mcp.js --connection-file /absolute/private/server.env --check-config
 ```
 
-Then configure your MCP client to launch the same command without `--check-config`. `npm start -- --env-file /absolute/private/server.env` also works. Without `--env-file`, only `.env` beside this package is read, never a parent project's file. Existing process environment overrides file values; avoid stale `SSH_*` variables when switching profiles. Relative credential paths resolve against the selected env file's directory; `~/` is supported for key paths. Use absolute paths for state directories and client configuration.
+Then configure your MCP client to launch the same command without `--check-config`. `npm start -- --connection-file /absolute/private/server.env` also works. Without `--connection-file`, only `.env` beside this package is read, never a parent project's file. Existing process environment overrides file values; avoid stale `SSH_*` variables when switching profiles. Relative credential paths resolve against the selected env file's directory; `~/` is supported for key paths. Use absolute paths for state directories and client configuration.
 
 ## Authentication
 
@@ -67,7 +73,7 @@ Then configure your MCP client to launch the same command without `--check-confi
 | `private_key` | `SSH_PRIVATE_KEY_PATH` | `SSH_KEY_PASSPHRASE` **or** `SSH_KEY_PASSPHRASE_FILE` |
 | `agent` | `SSH_AGENT_SOCKET` or inherited `SSH_AUTH_SOCK` on Unix | On Windows, defaults to the OpenSSH named pipe |
 
-Only the selected method is attempted: there is no password/key/agent fallback. Password files have one optional trailing newline removed. Use OpenSSH/PEM private keys; `.pub` files are not private keys, and PuTTY `.ppk` files need conversion first. Agent keys must already be loaded into the agent and authorized by the server. Hardware-backed keys may work through a compatible agent; hardware prompts, MFA/keyboard-interactive authentication, SSH certificates, ProxyJump and `~/.ssh/config` are not implemented or claimed as tested.
+Only the selected method is attempted: there is no password/key/agent fallback. Password files have one optional trailing newline removed. Use OpenSSH/PEM private keys; `.pub` files are not private keys, and PuTTY `.ppk` files need conversion first. Agent keys must already be loaded into the agent and authorized by the server. Hardware-backed keys may work through a compatible agent; hardware prompts, MFA/keyboard-interactive authentication, SSH certificates and `~/.ssh/config` are not implemented or claimed as tested. One explicit bastion is supported through `via`, without reading OpenSSH ProxyJump configuration.
 
 Common options: `SSH_HOST`, `SSH_USERNAME` and `SSH_AUTH_METHOD` are mandatory; `SSH_PORT` defaults to 22. `SSH_HOST_FINGERPRINT_SHA256` accepts `SHA256:base64` or bare base64. `SSH_ALLOW_UNVERIFIED_HOST=true` is an explicit **unsafe development-only** opt-out; never use it for production. `SSH_COMMAND_TIMEOUT_MS` defaults to 60000 for synchronous commands. The optional `SSH_DIAGNOSTIC_USER` is explained below.
 
@@ -88,7 +94,7 @@ On Windows, use paths such as `C:/tools/ssh-ops-mcp/bin/ssh-ops-mcp.js`. For Uni
 
 Clients using an `mcpServers` JSON configuration can adapt [examples/mcp-client.json](examples/mcp-client.json). This local stdio server is not directly reachable by a cloud-only ChatGPT session: it needs a client/local executor capable of launching local processes. Do not expose it as unauthenticated HTTP.
 
-Single-server mode remains available with `--env-file` or the default `.env`: existing calls, state locations and operation IDs are unchanged. Its local state lives under `~/.ssh-ops-mcp/state/<target-hash>`. Remote state remains under the SSH account's `~/.local/state/ssh-ops-mcp/`.
+Single-server mode remains available with `--connection-file` or the default `.env`: existing calls, state locations and operation IDs are unchanged. Its local state lives under `~/.ssh-ops-mcp/state/<target-hash>`. Remote state remains under the SSH account's `~/.local/state/ssh-ops-mcp/`.
 
 ## Multiple servers
 
@@ -111,13 +117,13 @@ node bin/ssh-ops-mcp.js --servers-file /absolute/private/servers.json --check-co
 node bin/ssh-ops-mcp.js --servers-file /absolute/private/servers.json
 ```
 
-`--servers-file` and `--env-file` cannot be combined. In multi-server mode profiles do not inherit process-wide SSH credentials or read the default `.env`; only the system `SSH_AUTH_SOCK` can supply an agent socket. Configuration validation is local and reports the failing profile without displaying secrets. A malformed profile prevents startup; an unreachable server at runtime does not prevent using the others.
+`--servers-file` and `--connection-file` cannot be combined. In multi-server mode profiles do not inherit process-wide SSH credentials or read the default `.env`; only the system `SSH_AUTH_SOCK` can supply an agent socket. Configuration validation is local and reports the failing profile without displaying secrets. A malformed profile prevents startup; an unreachable server at runtime does not prevent using the others.
 
 Call `ssh_servers_list`, then include `server_id` in every other tool call, even with a single configured profile. For example: `ssh_exec({"server_id":"staging","command":"hostname"})`. Retain that ID alongside `operation_id`, `transfer_id` and history cursors. Results, tool-handler errors and audits include the selected server ID. There is no active-server selector, fallback, cross-server history search or batch deployment.
 
 Multi-server state lives under `~/.ssh-ops-mcp/state/profiles/<target-hash>`. Set process-wide `SSH_MCP_STATE_DIR` to change the base. Operations, locks, history, download destinations and audits are target-specific. Upload sources remain in the package's shared `transfers/` directory; the explicit ID selects their destination server. Different hostname aliases for the same machine are not automatically recognized as duplicates.
 
-Restart MCP after changing profiles. Changing an ID alone retains target state; changing host, port or user selects different state. Existing state is not deleted. Running workers keep their connection snapshot, including credentials, and do not follow edited env/key files. Workers receive only the selected connection via IPC and a small system-environment allow-list. Profiles are routing and state isolation, not access controls: any client with these tools can use all configured accounts. Host-key pinning and remote OS permissions remain necessary.
+Restart MCP after changing profiles. Changing an ID alone retains target state; changing host, port or user selects different state. Existing state is not deleted. Running workers keep their connection snapshot, including credentials, and do not follow edited env/key files. Workers receive only the selected connection via IPC and a small system-environment allow-list. Without an access policy, any connected client can use every configured account. An optional policy limits exposed targets and tools per launch; it does not reduce an allowed shell account's OS permissions. Host-key pinning and remote OS permissions remain necessary.
 
 ## Tools and safe workflows
 
@@ -152,7 +158,9 @@ An SSH/MCP disconnect does not terminate durable work. Timeout/cancel terminates
 
 ### Files
 
-`ssh_file_hash`, `ssh_read_file`, `ssh_file_preview`, `ssh_write_file`, `ssh_upload_file`, `ssh_secret_presence`.
+`ssh_file_hash`, `ssh_read_file`, `ssh_file_preview`, `ssh_write_file`, `ssh_edit_file`, `ssh_find_files`, `ssh_search_text`, `ssh_upload_file`, `ssh_secret_presence`.
+
+Search and exact edit examples, limits and validation workflow are in [setup and access](docs/access.md#search-and-exact-edits).
 
 Hash first, preview the redacted diff, then write with `expected_sha256`; `null` means the target must not exist. Optional `validate_command` must contain `{path}` for the staged file. Existing owner/mode are retained; backups have strict access permissions. Targets and local transfer paths reject symlinks/junctions. These checks reduce accidental conflicts, not hostile same-account races or changes by external programs. Do not treat redacted output as a complete secret-loss prevention mechanism.
 
