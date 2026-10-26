@@ -41,7 +41,7 @@ async function check(name, fn) { await fn(); checks.push(name); console.log('PAS
       const cancelId = operationId('daemon-cancel', server.env);
       await rpc('start', { ...spec, operation_id: cancelId, command: 'sleep 30', request_id: 'daemon-cancel' }, 10000, server.env);
       await rpc('cancel', { operation_id: cancelId }, 10000, server.env);
-      await until(async () => ['cancelled', 'failed'].includes((await rpc('status', { operation_id: cancelId }, 10000, server.env)).state));
+      await until(async () => (await rpc('status', { operation_id: cancelId }, 10000, server.env)).state === 'cancelled');
     });
     for (const locked of [false, true]) await check(server.name.split('-')[1] + ': ' + (locked ? 'encrypted' : 'plain') + ' key', async () => {
       const file = path.join(dir, server.name + (locked ? '-locked' : '-plain'));
