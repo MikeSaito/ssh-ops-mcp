@@ -36,7 +36,14 @@ export async function runCli(args = process.argv.slice(2), launch) {
       console.log(JSON.stringify({ mcpServers: { ssh_ops: { command: process.execPath, args: launchArgs } } }, null, 2)); return;
     }
     const policy = await loadPolicy(policyFile);
-    if (!serversFile) { validatePolicyTargets(policy, new Set(['default'])); await loadEnvironment(envFile); }
+    if (!serversFile) {
+      if (envFile) validatePolicyTargets(policy, new Set(['default']));
+      await loadEnvironment(envFile);
+      serversFile = process.env.SSH_MCP_SERVERS_FILE;
+      policyFile ||= process.env.SSH_MCP_POLICY_FILE;
+      if (envFile && serversFile) throw new Error('A connection file cannot also select a servers file.');
+      if (!serversFile) validatePolicyTargets(await loadPolicy(policyFile), new Set(['default']));
+    }
     const registry = await loadRegistry({ serversFile, policyFile });
     if (!registry.multi) await buildConnectOptions();
     if (diagnose) {
