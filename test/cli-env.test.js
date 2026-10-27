@@ -5,10 +5,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { workerEnvironment } from '../src/config.js';
+import { privateDirectory } from '../src/local-state.js';
 
 test('default package .env selects a private manifest and policy before registry loading', async () => {
-  const root = path.resolve(import.meta.dirname, '..'), dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sshops-env-pointer-'));
+  const root = path.resolve(import.meta.dirname, '..'), dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sshops-env-pointer-')));
   try {
+    await privateDirectory(dir);
     await fs.cp(path.join(root, 'src'), path.join(dir, 'src'), { recursive: true });
     await fs.copyFile(path.join(root, 'package.json'), path.join(dir, 'package.json'));
     await fs.symlink(path.join(root, 'node_modules'), path.join(dir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
