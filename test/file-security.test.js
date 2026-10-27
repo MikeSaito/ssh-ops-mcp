@@ -4,6 +4,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { validateAcl, readSecureFile } from '../src/file-security.js';
+import { powershellInput, powershellEnvironment } from '../src/powershell-input.js';
+
+test('PowerShell input is one ASCII JSON frame with lossless Unicode and multiline values', () => {
+  const value = { path: 'данные-配置-🔑', text: 'first\nsecond\\third' }, frame = powershellInput(value);
+  assert.match(frame, /^[\x00-\x7f]+$/);
+  assert.equal(frame.split('\n').length, 2);
+  assert.deepEqual(JSON.parse(frame), value);
+  assert.deepEqual(powershellEnvironment({ PSModulePath: 'foreign', psmodulepath: 'foreign', WinPSModulePath: 'foreign', PSModuleAnalysisCachePath: 'foreign', PATH: 'synthetic' }), { PATH: 'synthetic', PSModuleAnalysisCachePath: 'NUL' });
+});
 
 const sid = 'S-1-5-21-100', foreign = 'S-1-5-32-545';
 const report = (rules = [], extras = {}) => ({ current_sid: sid, entries: [{ owner: sid, null_dacl: false, parent: false, rules, ...extras }] });

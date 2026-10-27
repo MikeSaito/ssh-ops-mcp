@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { powershellInput, powershellPrelude, powershellEnvironment } from './powershell-input.js';
 
 export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function alive(pid) {
@@ -75,24 +76,24 @@ function powershell(script, input) {
   return new Promise((resolve, reject) => {
     let phase = 'startup';
     const mark = name => `[Console]::Error.WriteLine('SSH_MCP_PS:${name}'); `;
-    const command = mark('entered') + script.replace(psInput, psInput + mark('input')).replace('Add-Type -AssemblyName System.Security;', 'Add-Type -AssemblyName System.Security; ' + mark('assembly')) + '; ' + mark('complete');
+    const command = mark('entered') + powershellPrelude + mark('modules') + script.replace(psInput, psInput + mark('input')).replace('Add-Type -AssemblyName System.Security;', 'Add-Type -AssemblyName System.Security; ' + mark('assembly')) + '; ' + mark('complete');
     const windowsRoot = process.env.SystemRoot || 'C:\\Windows';
     const executable = path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      // Do not inherit PowerShell 7 module paths into Windows PowerShell 5.1.
-      env: { ...process.env, PSModulePath: path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules') },
+      // Remove client module paths case-insensitively before loading system manifests.
+      env: powershellEnvironment(),
     });
     const chunks = [];
     const timer = setTimeout(() => { child.kill(); reject(new Error('Local protection operation timed out at ' + phase + '.')); }, 15000);
     child.stdout.on('data', chunk => chunks.push(chunk));
     child.stderr.on('data', bytes => {
-      for (const marker of bytes.toString('utf8').matchAll(/SSH_MCP_PS:(entered|input|assembly|complete)/g)) phase = marker[1];
+      for (const marker of bytes.toString('utf8').matchAll(/SSH_MCP_PS:(entered|modules|input|assembly|complete)/g)) phase = marker[1];
     });
     child.on('error', error => { clearTimeout(timer); reject(error); });
     child.on('close', code => { clearTimeout(timer); code === 0 ? resolve(Buffer.concat(chunks).toString('utf8').trim()) : reject(new Error('Windows private storage protection failed at ' + phase + '.')); });
     child.stdin.on('error', () => {});
-    child.stdin.end(JSON.stringify(input) + '\n');
+    child.stdin.end(powershellInput(input));
   });
 }
 const psInput = "$ErrorActionPreference='Stop'; $taskPayload = [Console]::In.ReadLine() | ConvertFrom-Json; ";

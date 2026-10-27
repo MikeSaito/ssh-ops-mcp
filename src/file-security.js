@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { powershellInput, powershellPrelude, powershellEnvironment } from './powershell-input.js';
 
 // Conservative allow-list validation, not a general effective-access evaluator.
 export function validateAcl(report, confidential = true) {
@@ -21,7 +22,7 @@ export function validateAcl(report, confidential = true) {
 export async function inspectWindowsAcl(file) {
   const root = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
   const executable = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const script = "$ErrorActionPreference='Stop'; $p=[Console]::In.ReadLine()|ConvertFrom-Json; " +
+  const script = powershellPrelude + "$p=[Console]::In.ReadLine()|ConvertFrom-Json; " +
     "$entries=@(); foreach($item in @(@{path=$p.path;parent=$false},@{path=[IO.Path]::GetDirectoryName($p.path);parent=$true})) {" +
     "$acl=Get-Acl -LiteralPath $item.path; $raw=[Security.AccessControl.RawSecurityDescriptor]::new($acl.Sddl); $rules=@();" +
     "if($null -ne $raw.DiscretionaryAcl){foreach($ace in $raw.DiscretionaryAcl){" +
@@ -32,7 +33,7 @@ export async function inspectWindowsAcl(file) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
-      env: { ...process.env, PSModulePath: path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules') },
+      env: powershellEnvironment(),
     });
     let output = '', settled = false;
     const finish = (error, value) => { if (settled) return; settled = true; clearTimeout(timer); error ? reject(error) : resolve(value); };
@@ -40,7 +41,7 @@ export async function inspectWindowsAcl(file) {
     child.on('error', () => finish(new Error('Windows ACL inspection unavailable.')));
     child.stdout.on('data', bytes => { output += bytes.toString('utf8'); if (output.length > 262144) { child.kill(); finish(new Error('Windows ACL inspection output exceeded limit.')); } });
     child.on('close', code => { try { if (code !== 0) throw new Error(); finish(null, JSON.parse(output)); } catch { finish(new Error('Windows ACL inspection failed.')); } });
-    child.stdin.on('error', () => {}); child.stdin.end(JSON.stringify({ path: file }) + '\n');
+    child.stdin.on('error', () => {}); child.stdin.end(powershellInput({ path: file }));
   });
 }
 export async function readSecureFile(file, { confidential = true, limit = 1024 * 1024 } = {}) {
