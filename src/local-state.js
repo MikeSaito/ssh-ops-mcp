@@ -92,10 +92,10 @@ function powershell(script, input) {
     child.on('error', error => { clearTimeout(timer); reject(error); });
     child.on('close', code => { clearTimeout(timer); code === 0 ? resolve(Buffer.concat(chunks).toString('utf8').trim()) : reject(new Error('Windows private storage protection failed at ' + phase + '.')); });
     child.stdin.on('error', () => {});
-    child.stdin.end(JSON.stringify(input));
+    child.stdin.end(JSON.stringify(input) + '\n');
   });
 }
-const psInput = "$ErrorActionPreference='Stop'; $taskPayload = [Console]::In.ReadToEnd() | ConvertFrom-Json; ";
+const psInput = "$ErrorActionPreference='Stop'; $taskPayload = [Console]::In.ReadLine() | ConvertFrom-Json; ";
 export async function privateDirectory(directory) {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   if ((await fs.lstat(directory)).isSymbolicLink()) throw new Error('Private directory cannot be a symlink or junction.');

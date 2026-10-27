@@ -21,7 +21,7 @@ export function validateAcl(report, confidential = true) {
 export async function inspectWindowsAcl(file) {
   const root = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
   const executable = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const script = "$ErrorActionPreference='Stop'; $p=[Console]::In.ReadToEnd()|ConvertFrom-Json; " +
+  const script = "$ErrorActionPreference='Stop'; $p=[Console]::In.ReadLine()|ConvertFrom-Json; " +
     "$entries=@(); foreach($item in @(@{path=$p.path;parent=$false},@{path=[IO.Path]::GetDirectoryName($p.path);parent=$true})) {" +
     "$acl=Get-Acl -LiteralPath $item.path; $raw=[Security.AccessControl.RawSecurityDescriptor]::new($acl.Sddl); $rules=@();" +
     "if($null -ne $raw.DiscretionaryAcl){foreach($ace in $raw.DiscretionaryAcl){" +
@@ -40,7 +40,7 @@ export async function inspectWindowsAcl(file) {
     child.on('error', () => finish(new Error('Windows ACL inspection unavailable.')));
     child.stdout.on('data', bytes => { output += bytes.toString('utf8'); if (output.length > 262144) { child.kill(); finish(new Error('Windows ACL inspection output exceeded limit.')); } });
     child.on('close', code => { try { if (code !== 0) throw new Error(); finish(null, JSON.parse(output)); } catch { finish(new Error('Windows ACL inspection failed.')); } });
-    child.stdin.on('error', () => {}); child.stdin.end(JSON.stringify({ path: file }));
+    child.stdin.on('error', () => {}); child.stdin.end(JSON.stringify({ path: file }) + '\n');
   });
 }
 export async function readSecureFile(file, { confidential = true, limit = 1024 * 1024 } = {}) {
