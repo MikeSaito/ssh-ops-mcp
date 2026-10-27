@@ -6,10 +6,20 @@ const { Client } = ssh2;
 
 export function quote(value) { return "'" + String(value).replaceAll("'", "'\\''") + "'"; }
 
-export async function connect(env = process.env) {
+async function directConnect(env, sock, observer) {
+  let previous = performance.now();
+  const timing = phase => {
+    const now = performance.now();
+    try { observer?.({ phase, duration_ms: now - previous }); } catch {}
+    previous = now;
+  };
   const options = await buildConnectOptions(env);
+  timing('configuration');
+  if (sock) options.sock = sock;
   return new Promise((resolve, reject) => {
     const client = new Client();
+    client.once('connect', () => timing('tcp'));
+    client.once('handshake', () => timing('ssh_handshake'));
     let ready = false, settled = false;
     const fail = error => {
       if (settled) return;
@@ -18,10 +28,39 @@ export async function connect(env = process.env) {
       reject(connectionError(error));
     };
     client.on('error', error => { if (!ready) fail(error); });
-    client.once('ready', () => { if (!settled) { ready = true; settled = true; resolve(client); } });
+    client.once('ready', () => { if (!settled) { timing('authentication'); ready = true; settled = true; resolve(client); } });
     client.once('close', () => { if (!ready) fail({ code: 'SSH_CLOSED_BEFORE_READY' }); });
     try { client.connect(options); } catch (error) { fail(error); }
   });
+}
+
+export async function connect(env = process.env, observer) {
+  if (!env.__jump) return directConnect(env, undefined, observer);
+  let jump, stream, target;
+  try {
+    jump = await directConnect(env.__jump, undefined, value => observer?.({ ...value, phase: 'transit_' + value.phase }));
+    stream = await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error, channel) => {
+        if (settled) { channel?.destroy(); return; }
+        settled = true; clearTimeout(timer); jump.removeListener('close', closed); jump.removeListener('error', closed);
+        error ? reject(error) : resolve(channel);
+      };
+      const closed = () => finish(sshError('ssh_transit_lost', 'transit', 'not_sent', 'Transit connection lost before target dispatch.'));
+      const timer = setTimeout(() => finish(sshError('ssh_transit_timeout', 'transit', 'not_sent', 'Transit channel timed out before target dispatch.')), 30000);
+      jump.once('close', closed); jump.once('error', closed);
+      jump.forwardOut('127.0.0.1', 0, env.SSH_HOST, Number(env.SSH_PORT || 22), (error, channel) =>
+        finish(error ? sshError('ssh_transit_refused', 'transit', 'not_sent', 'Transit host refused the configured destination. No direct fallback was attempted.') : null, channel));
+    });
+    stream.on('error', () => target?.destroy());
+    target = await directConnect(env, stream, value => observer?.({ ...value, phase: 'target_' + value.phase }));
+    jump.once('close', () => target.destroy());
+    target.once('close', () => { stream.destroy(); jump.end(); });
+    return target;
+  } catch (error) {
+    stream?.destroy(); jump?.destroy();
+    throw error;
+  }
 }
 
 export async function exec(command, timeoutMs = 60_000, input = '', raw = false, env = process.env) {

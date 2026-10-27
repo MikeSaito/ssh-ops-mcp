@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0
+
+- Restrict each MCP launch to explicit servers and tools with an optional local policy.
+- Validate Windows file and parent ACLs, credential files and existing state permissions without changing them.
+- Add local environment diagnostics, explicit connection probes and secret-free client configuration output.
+- Find files, search literal text and preview exact edits before hash-checked atomic replacement.
+- Connect through one explicitly authorized bastion with independent authentication and host-key verification.
+- Preserve selected routes in download worker snapshots and separate routed local state and request IDs.
+- Test Debian OpenSSH, Alpine OpenSSH and Dropbear in isolated Docker networks, including a private target.
+- Add latency measurements; production calls still use separate connections. Retained-connection experiments are not enabled in production.
+- Add `--connection-file` to avoid Node's native `--env-file` argument handling; retain the legacy flag with a Node option separator.
+
 ## 1.3.0
 
 - Preserve action results and operation IDs when the final audit write fails.

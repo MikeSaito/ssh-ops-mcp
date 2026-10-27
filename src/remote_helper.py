@@ -35,7 +35,7 @@ def dispatch(action, args, source):
                "file_hash": file_hash, "file_snapshot": file_snapshot, "write": write, "read": read,
                "upload_prepare": upload_prepare, "upload_commit": upload_commit,
                "service": service, "journal": journal, "secret_presence": secret_presence,
-               "probe": probe, "resource_status": resource_status, "resource_unlock": resource_unlock,
+               "probe": probe, "resource_status": resource_status, "resource_unlock": resource_unlock, "search": search_files,
                "state_usage": state_usage, "state_cleanup": state_cleanup}
     if action == "start":
         return start(args, source)

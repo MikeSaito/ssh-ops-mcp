@@ -3,12 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { loadEnvironment, loadRegistry, describeProfile, serverIdPattern } from './config.js';
+import { describeProfile, serverIdPattern } from './config.js';
 import { createTools } from './tools.js';
 import { Downloads } from './downloads.js';
 import { redact, audit } from './security.js';
 import { auditedCall } from './audited-call.js';
 import { packageInfo } from './version.js';
+import { permits } from './policy.js';
+import { prepareStateDirectory } from './file-security.js';
 
 function sanitize(value) {
   if (typeof value === 'string') return redact(value);
@@ -20,6 +22,7 @@ const result = value => ({ content: [{ type: 'text', text: typeof value === 'str
 const tagged = (registry, profile, value) => registry.multi ? { ...(value && typeof value === 'object' && !Array.isArray(value) ? value : { result: value }), server_id: profile.id } : value;
 
 export async function start(registry) {
+  await Promise.all([...registry.profiles.values()].map(profile => prepareStateDirectory(profile.stateDir)));
   const server = new McpServer(packageInfo, {
     instructions: 'Call ssh_servers_list to discover profiles. In multi-server mode every action requires explicit server_id; there is no active server. Keep the same server_id when polling operations or transfers. Use ssh_operation_start for deploys, migrations and long work. Always set resource to the same app name or absolute deployment directory across chats to exclude concurrent deploys. Retain request_id/operation_id and poll status/logs after disconnection. Never repeat unknown modifying work. Timeout/cancel terminate the operation process group; disconnection does not. Before editing, hash and preview, then apply with expected_sha256. Use ssh_download_file then status/resume with transfer_id for large files. Enable encrypt for sensitive dumps. Tools have only the configured SSH account privileges; ADMIN is a warning, not a security boundary. Diagnostics never run as root. Keep secrets out of commands and output.',
   });
@@ -27,11 +30,13 @@ export async function start(registry) {
     const context = { ...profile, downloads: new Downloads(profile.stateDir, profile.env, registry.multi) };
     return [id, { ...context, definitions: new Map(createTools(context).map(def => [def.name, def])) }];
   }));
-  await Promise.allSettled([...contexts.values()].map(context => context.downloads.cleanupExpired()));
-  const cleanup = setInterval(() => Promise.allSettled([...contexts.values()].map(context => context.downloads.cleanupExpired())), 60000);
+  const maintainable = [...contexts.values()].filter(context => permits(registry.policy, context.id, 'ssh_download_cleanup'));
+  await Promise.allSettled(maintainable.map(context => context.downloads.cleanupExpired()));
+  const cleanup = setInterval(() => Promise.allSettled(maintainable.map(context => context.downloads.cleanupExpired())), 60000);
   cleanup.unref();
   const template = contexts.values().next().value;
   for (const def of template.definitions.values()) {
+    if (![...contexts.keys()].some(id => permits(registry.policy, id, def.name))) continue;
     const selector = z.string().regex(serverIdPattern).describe('Server ID from ssh_servers_list. No automatic fallback.');
     server.registerTool(def.name, {
       description: def.description,
@@ -44,6 +49,7 @@ export async function start(registry) {
       try {
         context = contexts.get(server_id ?? (registry.multi ? undefined : 'default'));
         if (!context) throw new Error('Unknown or missing server_id. Use ssh_servers_list.');
+        if (!permits(registry.policy, context.id, def.name)) throw new Error('Access policy denies this tool on the selected server.');
         const record = entry => audit(context.stateDir, { ...entry, server: context.env.SSH_HOST, ...(registry.multi ? { server_id: context.id } : {}) });
         const call = await auditedCall(record, { tool: def.name, operation_id: input.operation_id }, () => context.definitions.get(def.name).callback(input));
         warnings = call.warnings;
@@ -71,8 +77,6 @@ export async function start(registry) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    if (!process.env.SSH_MCP_SERVERS_FILE) await loadEnvironment();
-    await start(await loadRegistry({ serversFile: process.env.SSH_MCP_SERVERS_FILE }));
-  } catch (error) { console.error(redact('SSH MCP: ' + error.message)); process.exitCode = 1; }
+  const { runCli } = await import('./cli.js');
+  await runCli(process.argv.slice(2), start);
 }

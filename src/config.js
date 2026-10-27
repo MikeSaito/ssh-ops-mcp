@@ -6,14 +6,17 @@ import dotenv from 'dotenv';
 import ssh2 from 'ssh2';
 import { fileURLToPath } from 'node:url';
 import { registerSecret } from './security.js';
+import { readSecureFile } from './file-security.js';
+import { loadPolicy, validatePolicyTargets } from './policy.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const { utils } = ssh2;
 export async function loadEnvironment(envFile) {
   const file = envFile ? path.resolve(envFile) : path.join(ROOT, '.env');
   let bytes;
-  try { bytes = await fs.readFile(file, 'utf8'); }
+  try { await fs.access(file); }
   catch (error) { if (!envFile && error.code === 'ENOENT') return; throw new Error('Cannot read the selected environment file.'); }
+  bytes = (await readSecureFile(file)).toString('utf8');
   const parsed = dotenv.parse(bytes);
   // Explicit process environment takes precedence; never search a parent project.
   for (const [key, value] of Object.entries(parsed)) if (process.env[key] === undefined) process.env[key] = value;
@@ -25,11 +28,7 @@ function resolveFile(value, env) {
 }
 async function readPrivateFile(value, env) {
   const file = resolveFile(value, env);
-  // Limit input, reject symlinks and public POSIX permissions. Windows users must protect the file ACL.
-  const info = await fs.lstat(file).catch(() => { throw new Error('Cannot read credential file.'); });
-  if (!info.isFile() || info.size > 1024 * 1024) throw new Error('Credential file must be a regular file smaller than 1 MiB.');
-  if (process.platform !== 'win32' && (info.mode & 0o077)) throw new Error('Credential file permissions must be 0600 or stricter.');
-  return fs.readFile(file);
+  return readSecureFile(file);
 }
 async function secret(env, name) {
   if (env[name] && env[name + '_FILE']) throw new Error(`Set either ${name} or ${name}_FILE, not both.`);
@@ -38,6 +37,7 @@ async function secret(env, name) {
   return value;
 }
 export function connectionIdentity(env = process.env) {
+  if (env.__jump) return crypto.createHash('sha256').update('via\0' + connectionIdentity(env.__jump) + '\0' + connectionIdentity({ ...env, __jump: undefined })).digest('hex').slice(0, 24);
   return crypto.createHash('sha256').update([env.SSH_HOST?.trim().toLowerCase(), String(Number(env.SSH_PORT || 22)), env.SSH_USERNAME].join('\0')).digest('hex').slice(0, 24);
 }
 export function stateDirectory(env = process.env) {
@@ -100,6 +100,7 @@ export async function snapshotEnvironment(env) {
   if (options.passphrase !== undefined) selected.SSH_KEY_PASSPHRASE = options.passphrase;
   delete selected.SSH_KEY_PASSPHRASE_FILE;
   if (options.agent) selected.SSH_AGENT_SOCKET = options.agent;
+  if (env.__jump) selected.__jump = await snapshotEnvironment(env.__jump);
   return Object.freeze(selected);
 }
 
@@ -113,39 +114,59 @@ export function describeProfile(profile) {
     username: profile.env.SSH_USERNAME, auth_method: profile.env.SSH_AUTH_METHOD };
 }
 
-export async function loadRegistry({ serversFile, env = process.env } = {}) {
+export async function loadRegistry({ serversFile, policyFile, env = process.env } = {}) {
+  const policy = await loadPolicy(policyFile || env.SSH_MCP_POLICY_FILE);
   if (!serversFile) {
+    validatePolicyTargets(policy, new Set(['default']));
     const stateDir = stateDirectory(env);
     // Preserve legacy environment and ID inputs exactly; credentials are snapshotted before worker launch.
-    return { multi: false, profiles: new Map([['default', { id: 'default', name: 'Default', env: Object.freeze({ ...env }), stateDir }]]) };
+    return { multi: false, policy, profiles: new Map([['default', { id: 'default', name: 'Default', env: Object.freeze({ ...env }), stateDir }]]) };
   }
   const file = path.resolve(serversFile);
   let data;
   try {
-    const info = await fs.lstat(file);
-    if (!info.isFile() || info.size > 1024 * 1024) throw new Error();
-    data = JSON.parse(await fs.readFile(file, 'utf8'));
-  } catch { throw new Error('Cannot read servers file: expected a regular JSON file smaller than 1 MiB.'); }
+    data = JSON.parse((await readSecureFile(file, { confidential: false })).toString('utf8'));
+  } catch (error) { throw new Error('Cannot read servers file: ' + (error instanceof SyntaxError ? 'invalid JSON.' : error.message)); }
   if (!data || data.version !== 1 || !Array.isArray(data.servers) || !data.servers.length || Object.keys(data).some(key => !['version', 'servers'].includes(key)))
     throw new Error('Servers file requires version: 1 and a nonempty servers array.');
-  const profiles = new Map(), identities = new Set();
+  const entries = new Map();
   for (const item of data.servers) {
     if (!item || typeof item.id !== 'string' || !serverIdPattern.test(item.id)) throw new Error('Invalid server ID: use 1-64 lowercase letters, digits, underscores or hyphens.');
-    if (profiles.has(item.id)) throw new Error('Duplicate server ID: ' + item.id);
+    if (entries.has(item.id)) throw new Error('Duplicate server ID: ' + item.id);
+    if (Object.keys(item).some(key => !['id', 'name', 'env_file', 'via'].includes(key)) || typeof item.env_file !== 'string' || !item.env_file || (item.name !== undefined && (typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200)) || (item.via !== undefined && (typeof item.via !== 'string' || !serverIdPattern.test(item.via)))) throw new Error('Invalid server profile fields.');
+    entries.set(item.id, item);
+  }
+  validatePolicyTargets(policy, new Set(entries.keys()));
+  const targets = policy ? new Set(policy.servers.keys()) : new Set(entries.keys());
+  const needed = new Set(targets);
+  for (const item of entries.values()) {
+    if (item.via && (!entries.has(item.via) || item.via === item.id || entries.get(item.via).via)) throw new Error('via must reference one distinct direct profile; chains and cycles are not supported.');
+    if (targets.has(item.id) && item.via) {
+      if (policy && !policy.transit.has(item.via)) throw new Error('Access policy must explicitly authorize the transit server.');
+      needed.add(item.via);
+    }
+  }
+  const loaded = new Map();
+  for (const item of entries.values()) {
+    if (!needed.has(item.id)) continue;
     try {
-      if (Object.keys(item).some(key => !['id', 'name', 'env_file'].includes(key)) || typeof item.env_file !== 'string' || !item.env_file || (item.name !== undefined && (typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200)))
-        throw new Error('Expected id, optional name, and env_file.');
       const profileFile = path.resolve(path.dirname(file), item.env_file);
       const parsed = dotenv.parse(await readPrivateFile(profileFile, {}));
       const profileEnv = { ...Object.fromEntries(Object.entries(parsed).filter(([key]) => profileFields.has(key))), SSH_MCP_CONFIG_DIR: path.dirname(profileFile) };
       if (!profileEnv.SSH_AUTH_SOCK && env.SSH_AUTH_SOCK) profileEnv.SSH_AUTH_SOCK = env.SSH_AUTH_SOCK;
       const snapshot = await snapshotEnvironment(profileEnv);
-      const identity = connectionIdentity(snapshot);
-      if (identities.has(identity)) throw new Error('Duplicate address, port and username.');
-      identities.add(identity);
-      const base = env.SSH_MCP_STATE_DIR ? path.resolve(env.SSH_MCP_STATE_DIR) : path.join(os.homedir(), '.ssh-ops-mcp', 'state');
-      profiles.set(item.id, Object.freeze({ id: item.id, name: item.name || item.id, env: snapshot, stateDir: path.join(base, 'profiles', identity) }));
+      loaded.set(item.id, snapshot);
     } catch (error) { throw new Error('Profile ' + item.id + ': ' + error.message); }
   }
-  return { multi: true, profiles };
+  const profiles = new Map(), identities = new Set();
+  for (const id of targets) {
+    const item = entries.get(id);
+    const selected = item.via ? Object.freeze({ ...loaded.get(id), __jump: loaded.get(item.via) }) : loaded.get(id);
+    const identity = connectionIdentity(selected);
+    if (identities.has(identity)) throw new Error('Duplicate address, port and username on the same route.');
+    identities.add(identity);
+    const base = env.SSH_MCP_STATE_DIR ? path.resolve(env.SSH_MCP_STATE_DIR) : path.join(os.homedir(), '.ssh-ops-mcp', 'state');
+    profiles.set(id, Object.freeze({ id, name: item.name || id, env: selected, stateDir: path.join(base, 'profiles', identity) }));
+  }
+  return { multi: true, policy, profiles };
 }

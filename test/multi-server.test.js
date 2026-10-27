@@ -75,7 +75,7 @@ test('all tools require explicit targets; parallel commands, diagnostics and aud
   const f = await fixture(); let app;
   try {
     app = await f.open();
-    const listing = await app.client.listTools(); assert.equal(listing.tools.length, 29);
+    const listing = await app.client.listTools(); assert.equal(listing.tools.length, 32);
     for (const tool of listing.tools.filter(tool => tool.name !== 'ssh_servers_list')) assert.ok(tool.inputSchema.required.includes('server_id'), tool.name);
     const servers = await app.value('ssh_servers_list'); assert.equal(servers.servers.length, 2);
     assert.equal(f.first.attempts.length + f.second.attempts.length, 0);

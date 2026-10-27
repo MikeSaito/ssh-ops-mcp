@@ -1,7 +1,7 @@
 # Replace paths. Store servers.json and env files outside the repository.
 [mcp_servers.ssh_servers]
 command = "node"
-args = ["/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--servers-file", "/absolute/private/servers.json"]
+args = ["--", "/absolute/path/ssh-ops-mcp/bin/ssh-ops-mcp.js", "--servers-file", "/absolute/private/servers.json"]
 startup_timeout_sec = 20
 tool_timeout_sec = 120
 default_tools_approval_mode = "prompt"

@@ -23,5 +23,6 @@ export async function rpc(action, args = {}, timeoutMs = 30_000, env = process.e
 }
 
 export function operationId(requestId, env = process.env) {
+  if (env.__jump) return crypto.createHash('sha256').update('via\0' + operationId(requestId, { ...env, __jump: undefined }) + '\0' + operationId('route', env.__jump)).digest('hex').slice(0, 32);
   return crypto.createHash('sha256').update([env.SSH_HOST?.trim().toLowerCase(), String(Number(env.SSH_PORT || 22)), env.SSH_USERNAME, requestId].join('\0')).digest('hex').slice(0, 32);
 }

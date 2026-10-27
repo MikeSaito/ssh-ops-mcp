@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "servers": {
+    "prod": {
+      "tools": ["ssh_server_info", "ssh_service_status", "ssh_file_hash", "ssh_read_file", "ssh_find_files", "ssh_search_text"]
+    },
+    "staging": {
+      "tools": ["ssh_server_info", "ssh_exec", "ssh_file_hash", "ssh_edit_file"]
+    }
+  },
+  "transit_servers": []
+}
