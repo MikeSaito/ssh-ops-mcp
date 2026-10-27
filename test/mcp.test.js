@@ -17,7 +17,8 @@ test('public entrypoint initializes MCP and executes over the test SSH server', 
   const transport = new StdioClientTransport({ command: process.execPath, args: [bin], cwd: dir, env: { ...server.env, SSH_MCP_STATE_DIR: dir }, stderr: 'pipe' });
   let errors = ''; transport.stderr?.on('data', data => { errors += data.toString(); });
   try {
-    await client.connect(transport);
+    try { await client.connect(transport); }
+    catch (error) { throw new Error('Synthetic MCP startup failed: ' + errors, { cause: error }); }
     const listed = await client.listTools(); assert.equal(listed.tools.length, 32);
     assert.ok(listed.tools.some(tool => tool.name === 'ssh_operation_report'));
     assert.ok(listed.tools.find(tool => tool.name === 'ssh_operation_start').inputSchema.properties.steps);
