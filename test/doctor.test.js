@@ -19,7 +19,7 @@ test('doctor defaults to local checks and never connects or prints credentials',
     const entry = path.join(root, publicCopy ? 'bin/ssh-ops-mcp.js' : 'src/index.js');
     const clean = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('SSH_')));
     const file = path.join(dir, 'profile.env'); await fs.writeFile(file, Object.entries(server.env).map(([key, value]) => key + '=' + value).join('\n'), { mode: 0o600 });
-    const run = args => spawnSync(process.execPath, ['--', entry, ...args], { encoding: 'utf8', env: clean, windowsHide: true });
+    const run = args => spawnSync(process.execPath, ['--', entry, ...args], { encoding: 'utf8', env: { ...clean, SSH_MCP_STATE_DIR: path.join(dir, 'cli-state') }, windowsHide: true });
     const good = run(['--env-file', file, '--doctor']); assert.equal(good.status, 0, good.stderr); assert.equal(JSON.parse(good.stdout).ready, true);
     assert.equal(server.attempts.length, 0);
     const client = run(['--env-file', file, '--print-client-config']); assert.equal(client.status, 0);

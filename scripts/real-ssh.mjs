@@ -5,6 +5,7 @@ import os from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { privateDirectory } from '../src/local-state.js';
+import { prepareFixtureSource } from './fixture-source.mjs';
 
 const root = path.resolve(import.meta.dirname, '..'), run = promisify(execFile);
 const suffix = crypto.randomBytes(5).toString('hex'), front = 'sshops-front-' + suffix, back = 'sshops-back-' + suffix;
@@ -47,16 +48,20 @@ try {
   const alpine = await fixture('alpine', front, alpineImage);
   const noSftp = await fixture('nosftp', front), privateTarget = await fixture('private', back);
   await docker('network', 'connect', back, open.name);
+  const keys = path.join(dir, 'keys');
+  await fs.mkdir(keys, { mode: 0o700 });
   for (const server of [open, drop, alpine]) for (const locked of [false, true]) {
-    const file = path.join(dir, server.name + (locked ? '-locked' : '-plain'));
+    const file = path.join(keys, server.name + (locked ? '-locked' : '-plain'));
     await docker('cp', server.name + ':/fixture/client' + (locked ? '-locked' : ''), file); await fs.chmod(file, 0o600);
   }
+  const source = path.join(dir, 'source');
+  await prepareFixtureSource(root, source);
   const command = 'cp -a /source /tmp/project && cp -a /keys /tmp/keys && chmod 700 /tmp/keys && chmod 600 /tmp/keys/* && cd /tmp/project && node scripts/real-ssh-client.mjs' +
     (process.argv.includes('--bench') ? ' --bench' : '') + ' && npm test && npm run test:operations';
   const runner = 'sshops-client-' + suffix;
   containers.push(runner);
   const args = ['run', '--rm', '--name', runner, '--entrypoint', '/bin/sh', '--network', front,
-    '--mount', 'type=bind,src=' + root + ',dst=/source,readonly', '--mount', 'type=bind,src=' + dir + ',dst=/keys,readonly',
+    '--mount', 'type=bind,src=' + source + ',dst=/source,readonly', '--mount', 'type=bind,src=' + keys + ',dst=/keys,readonly',
     '-e', 'SSHOPS_FIXTURES=' + JSON.stringify({ open, drop, alpine, noSftp, privateTarget }), image, '-c', command];
   await new Promise((resolve, reject) => {
     const child = spawn('docker', args, { cwd: root, windowsHide: true, stdio: 'inherit' });

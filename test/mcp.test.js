@@ -14,7 +14,9 @@ const bin = path.join(root, 'bin/ssh-ops-mcp.js');
 test('public entrypoint initializes MCP and executes over the test SSH server', async () => {
   const server = await testServer(), dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sshops-mcp-'));
   const client = new Client({ name: 'public-test', version: '1.0' });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [bin], cwd: dir, env: { ...server.env, SSH_MCP_STATE_DIR: dir }, stderr: 'pipe' });
+  const connection = path.join(dir, 'synthetic.env');
+  await fs.writeFile(connection, Object.entries(server.env).map(([key, value]) => key + '=' + value).join('\n'), { mode: 0o600 });
+  const transport = new StdioClientTransport({ command: process.execPath, args: ['--', bin, '--connection-file', connection], cwd: dir, env: { ...server.env, SSH_MCP_STATE_DIR: path.join(dir, 'state') }, stderr: 'pipe' });
   let errors = ''; transport.stderr?.on('data', data => { errors += data.toString(); });
   try {
     try { await client.connect(transport); }

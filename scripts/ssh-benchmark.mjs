@@ -53,9 +53,11 @@ export async function benchmark(env, label) {
   const state = await fs.mkdtemp(path.join(os.tmpdir(), 'sshops-benchmark-'));
   await privateDirectory(state);
   const root = path.resolve(import.meta.dirname, '..');
+  const connection = path.join(state, 'synthetic.env');
+  await fs.writeFile(connection, Object.entries(env).filter(([, value]) => typeof value === 'string').map(([key, value]) => key + '=' + JSON.stringify(value)).join('\n'), { mode: 0o600 });
   const publicCopy = await fs.access(path.join(root, 'bin/ssh-ops-mcp.js')).then(() => true, () => false);
   const transport = new StdioClientTransport({ command: process.execPath,
-    args: ['--', path.join(root, publicCopy ? 'bin/ssh-ops-mcp.js' : 'src/index.js')],
+    args: ['--', path.join(root, publicCopy ? 'bin/ssh-ops-mcp.js' : 'src/index.js'), '--connection-file', connection],
     env: { ...workerEnvironment(), ...env, SSH_MCP_STATE_DIR: path.join(state, 'state') }, stderr: 'pipe' });
   const mcp = new Client({ name: 'synthetic-benchmark', version: '1' });
   let endToEnd;
