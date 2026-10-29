@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1
+
+- Correlate audit records per call and measure handler duration with a monotonic clock.
+- Record allow-listed failure codes and transport stages without raw errors or secret values.
+- Distinguish returned nonzero command exits and unavailable operation status in audit metadata.
+- Preserve existing audit outcomes, rotation and behavior when audit writes fail.
+
 ## 1.4.0
 
 - Restrict each MCP launch to explicit servers and tools with an optional local policy.
