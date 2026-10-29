@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { localLock } from './local-state.js';
+import { safeAuditMetadata } from './audit-metadata.js';
 
 const loadedSecrets = new Set();
 export function registerSecret(value) { if (value) loadedSecrets.add(String(value)); }
@@ -79,6 +80,7 @@ export async function audit(root, entry) {
   const safe = {
     time: new Date().toISOString(), server: entry.server ?? process.env.SSH_HOST, server_id: entry.server_id,
     tool: entry.tool, operation_id: entry.operation_id, outcome: entry.outcome,
+    ...safeAuditMetadata(entry),
   };
   // No arguments, commands, contents, stdout or raw errors.
   const file = path.join(dir, 'audit.jsonl');

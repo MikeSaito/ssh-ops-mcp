@@ -1,6 +1,6 @@
 {
   "name": "ssh-ops-mcp",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "type": "module",
   "description": "Local SSH MCP for recoverable operations, safe file changes and protected transfers",

@@ -55,3 +55,19 @@ test('audit excludes arguments, commands, raw errors and contents', async () => 
     assert.equal(JSON.parse(text).tool, 'ssh_write_file');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('audit writer rejects unknown diagnostic values independently of the caller', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sshops-audit-filter-'));
+  try {
+    const invalid = ['private-secret', {}, NaN, Infinity, -1, 1.5, null];
+    for (const value of invalid) await audit(root, { tool: 'test', outcome: 'returned', call_id: value, duration_ms: value, error_code: value, phase: value, dispatch_state: value, exit_code: 'private-secret', operation_state: value });
+    const records = (await fs.readFile(path.join(root, 'audit.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    for (const record of records) {
+      for (const field of ['call_id', 'duration_ms', 'error_code', 'phase', 'dispatch_state', 'exit_code', 'operation_state']) assert.equal(record[field], undefined);
+    }
+    await audit(root, { tool: 'test', outcome: 'error_or_unknown', duration_ms: 0, error_code: 'ssh_connect_timeout', phase: 'connect', dispatch_state: 'not_sent' });
+    const last = JSON.parse((await fs.readFile(path.join(root, 'audit.jsonl'), 'utf8')).trim().split('\n').at(-1));
+    assert.equal(last.duration_ms, 0); assert.equal(last.error_code, 'ssh_connect_timeout');
+    assert.equal(last.phase, 'connect'); assert.equal(last.dispatch_state, 'not_sent');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

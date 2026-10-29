@@ -15,7 +15,7 @@ Without a policy, clients can call tools for every configured profile. An option
 - Diagnostic DNS/service tools do not run as root. Privileged execution/file/journal tools retain the SSH account's actual rights.
 - Hash-checked staged writes, validation, private backups and symlink rejection. Filesystem changes by other programs or a malicious same-account process are not transactional.
 - Private local download storage, source/hash checks and optional AES-256-GCM framing. Windows DPAPI protects stored keys for the current user; Unix keys are stored under owner-only permissions.
-- Audit entries omit commands, arguments, contents, stdout and raw errors. Redaction handles common formats and loaded connection secrets, but cannot reliably detect every secret, encoding, binary output or unusual configuration format.
+- Audit entries omit commands, arguments, contents, stdout and raw errors. Diagnostic fields use fixed code/state allow-lists, generated call IDs and numeric durations/exit codes. Unknown errors receive a generic code without their original value or text. Redaction handles common formats and loaded connection secrets, but cannot reliably detect every secret, encoding, binary output or unusual configuration format.
 
 ## Known limits
 
