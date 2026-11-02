@@ -23,7 +23,7 @@
     "prepack": "npm run check:release"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^18.0.8",
     "ssh2": "^1.17.0",
     "zod": "^4.6.7"
