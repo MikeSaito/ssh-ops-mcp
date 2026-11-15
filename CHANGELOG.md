@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.2
+
+- Update transitive dependencies `hono` to 4.13.18 and `@hono/node-server` to 2.1.8 to address Dependabot alerts #1 through #7.
+
 ## 1.4.1
 
 - Correlate audit records per call and measure handler duration with a monotonic clock.
